@@ -10,12 +10,20 @@ A point-of-sale, inventory and customer-credit (udhaar) system for **Moiz Mobile
 Danwran Lodhran** — a single mobile-accessories shop. Two users: the owner (Admin) and a
 salesman (Staff).
 
+**Two repositories**, cloned side by side:
+
 ```
-backend/   ASP.NET Core 8 · Dapper · MySQL 8        frontend/  React 18 · TypeScript · Vite
-specs/     the specification, plan and task list    docs/      deployment notes
+backend/    (this repo, MobileAccessoriesBack)        ASP.NET Core 8 · Dapper · MySQL 8
+  src/ tests/   the API and its three test projects
+  specs/        the specification, plan and task list for every feature — both halves
+  docs/         deployment and operational notes
+frontend/   (Mobile-Accessories-Frontend)              React 18 · TypeScript · Vite
 ```
 
-The backend is **one project**, `backend/src/MoizPos`, holding every layer in its own folder —
+The specs, docs and this file live here because they were written for the whole system; the
+frontend repo's own `CLAUDE.md` carries its working rules and points back here for the rest.
+
+The backend is **one project**, `src/MoizPos`, holding every layer in its own folder —
 `Domain/`, `Application/`, `Infrastructure/`, `Api/`, `Migrator/` — plus one test project per kind
 of test. Folders map to the namespaces they always had, so `MoizPos.Domain.Entities` is
 `Domain/Entities`.
@@ -25,15 +33,15 @@ of test. Folders map to the namespaces they always had, so `MoizPos.Domain.Entit
 ```bash
 # database (once)
 mysql -u root -p < docs/create-databases.sql
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet run --project src/MoizPos -- migrate
 
 # run
-dotnet run --project backend/src/MoizPos           # http://localhost:5080
-cd frontend && npm run dev                         # http://localhost:5173
+dotnet run --project src/MoizPos                  # http://localhost:5080
+cd ../frontend && npm run dev                     # http://localhost:5173
 
 # test — both must pass before anything is merged
-cd backend  && dotnet test
-cd frontend && npm run test && npx tsc --noEmit
+dotnet test
+cd ../frontend && npm run test && npx tsc --noEmit
 ```
 
 **The GitHub repository is public.** No file holding a credential may be tracked.
@@ -506,7 +514,7 @@ Each of these caused a real bug during the build.
 - **TDD.** A failing test comes first. A phase is done only when unit tests pass, integration
   tests pass, and nothing previously green broke.
 - **Schema changes go through DbUp**, as a new numbered script in
-  `backend/src/MoizPos/Migrator/Scripts/`. Never edit an applied script; never hand-edit a
+  `src/MoizPos/Migrator/Scripts/`. Never edit an applied script; never hand-edit a
   shared database.
 
 ## Layering

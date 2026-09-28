@@ -60,15 +60,15 @@ The software answers six questions the shop actually has:
                             22 tables, all money DECIMAL
 ```
 
-### Two halves, one repository
+### Two halves, two repositories
 
 ```
-backend/src/MoizPos      the API and everything behind it
+backend/src/MoizPos      the API and everything behind it           (backend repository)
 backend/tests            three test projects (unit, integration, architecture)
-frontend/src             the React app the shop actually touches
+backend/specs            specification, plans, task lists per feature
+backend/docs             deployment and this document
+frontend/src             the React app the shop actually touches    (frontend repository)
 frontend/tests           its test suite
-specs/                   specification, plans, task lists per feature
-docs/                    deployment and this document
 ```
 
 The backend is **one .NET project**, not five. Each layer is a folder, and the folder maps to the
@@ -97,7 +97,7 @@ drawer should hold — are all plain functions you can test in milliseconds with
 
 ## 3. The screens, and who can reach them
 
-Routing lives in `frontend/src/routes/AppRoutes.tsx`. The sidebar groups them
+Routing lives in `../frontend/src/routes/AppRoutes.tsx`. The sidebar groups them
 (`components/AppShell.tsx`).
 
 | Screen | Path | Who | What it is for |
@@ -576,10 +576,10 @@ Services inject `IClock` and never call `DateTime.UtcNow` — which is what make
 | Controls | `day_closings`, `audit_entries` |
 | Sharing | `document_tokens` |
 
-Schema history is 28 numbered DbUp scripts in `backend/src/MoizPos/Migrator/Scripts/`, applied by:
+Schema history is 28 numbered DbUp scripts in `src/MoizPos/Migrator/Scripts/`, applied by:
 
 ```bash
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet run --project src/MoizPos -- migrate
 ```
 
 Each one is a written record of *why* the change was needed — several read as post-mortems of bugs
@@ -592,15 +592,15 @@ found in the shop.
 ```bash
 # once
 mysql -u root -p < docs/create-databases.sql
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet run --project src/MoizPos -- migrate
 
 # day to day
-dotnet run --project backend/src/MoizPos     # http://localhost:5080
-cd frontend && npm run dev                   # http://localhost:5173
+dotnet run --project src/MoizPos     # http://localhost:5080
+cd ../frontend && npm run dev                   # http://localhost:5173
 
 # before merging anything — both must pass
-cd backend  && dotnet test
-cd frontend && npm run test && npx tsc --noEmit
+dotnet test                      
+cd ../frontend && npm run test && npx tsc --noEmit
 ```
 
 **The GitHub repository is public.** No file holding a credential may be tracked.

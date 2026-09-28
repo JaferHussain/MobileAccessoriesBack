@@ -5,6 +5,10 @@ Danwran Lodhran** — a mobile accessories retail shop.
 
 ## Layout
 
+This is the **backend** repository. The React counter app is its own repository,
+[Mobile-Accessories-Frontend](https://github.com/JaferHussain/Mobile-Accessories-Frontend), and the
+commands below assume the two are cloned side by side as `backend/` and `frontend/`.
+
 ```
 backend/          ASP.NET Core 8 Web API (Controller → Service → Repository, Dapper, MySQL 8)
   src/
@@ -20,9 +24,10 @@ backend/          ASP.NET Core 8 Web API (Controller → Service → Repository,
     MoizPos.IntegrationTests/  endpoints against a disposable MySQL schema
     MoizPos.ArchitectureTests/ asserts Staff DTOs carry no cost/profit property
 
-frontend/         React 18 + TypeScript (Vite)
-specs/            Spec Kit feature specifications, plans and tasks
-docs/             deployment and operational notes
+  specs/          Spec Kit feature specifications, plans and tasks (both halves)
+  docs/           deployment and operational notes
+
+frontend/         React 18 + TypeScript (Vite) — a separate repository
 ```
 
 Layering is enforced by project references, not convention: `Domain` references nothing,
@@ -48,16 +53,16 @@ mysql -u root -p -e "CREATE DATABASE moizpos CHARACTER SET utf8mb4 COLLATE utf8m
 mysql -u root -p -e "CREATE DATABASE moizpos_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
 # secrets (never committed)
-cd backend/src/MoizPos
+cd src/MoizPos
 dotnet user-secrets set "ConnectionStrings:Default" "Server=localhost;Database=moizpos;Uid=root;Pwd=<password>;"
 dotnet user-secrets set "Jwt:Key" "<at least 32 random characters>"
 
 # schema
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet run --project src/MoizPos -- migrate
 
 # run
-dotnet run --project backend/src/MoizPos        # http://localhost:5080
-cd frontend && npm install && npm run dev        # http://localhost:5173
+dotnet run --project src/MoizPos        # http://localhost:5080
+cd ../frontend && npm install && npm run dev        # http://localhost:5173
 ```
 
 > **Change the seeded `admin` password before the shop uses the system.**
@@ -65,8 +70,8 @@ cd frontend && npm install && npm run dev        # http://localhost:5173
 ## Tests
 
 ```bash
-cd backend  && dotnet test
-cd frontend && npm run test
+dotnet test                      
+cd ../frontend && npm run test
 ```
 
 Integration tests create and drop their own schema in `moizpos_test`. They fail fast if MySQL is

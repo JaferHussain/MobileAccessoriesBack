@@ -38,6 +38,8 @@ secrets.json
 backups/
 uploads/
 content/products/
+# Customers' payment screenshots — evidence, never source. The repository is public.
+content/payment-proofs/
 *.sql.gz
 *.dump
 
@@ -54,6 +56,6 @@ Thumbs.db
 .vscode/
 !.vscode/extensions.json
 # Build output: the React app is compiled into the API's wwwroot at publish time.
-backend/src/MoizPos/wwwroot/
+src/MoizPos/wwwroot/
 # The deployable package.
 deploy/

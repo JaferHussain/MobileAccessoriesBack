@@ -42,7 +42,7 @@ On the shop machine these go directly in `appsettings.Production.json`, which is
 therefore never pushed. See **Settings** below. In development, use user-secrets instead:
 
 ```bash
-dotnet user-secrets set "ConnectionStrings:Default" "..." --project backend/src/MoizPos
+dotnet user-secrets set "ConnectionStrings:Default" "..." --project src/MoizPos
 ```
 
 If `Jwt:Key` is missing or too short the API refuses to start, rather than running insecurely.
@@ -50,7 +50,7 @@ If `Jwt:Key` is missing or too short the API refuses to start, rather than runni
 ### 4. Create the tables
 
 ```bash
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet run --project src/MoizPos -- migrate
 ```
 
 Safe to re-run — already-applied scripts are skipped. Run this after **every** update; it is how
@@ -59,8 +59,8 @@ schema changes reach the database.
 ### 5. Start it
 
 ```bash
-dotnet run --project backend/src/MoizPos
-cd frontend && npm run build      # produces frontend/dist for your web server
+dotnet run --project src/MoizPos
+cd ../frontend && npm run build      # produces ../frontend/dist for your web server
 ```
 
 On first run the API creates an administrator and writes a warning to the log:
@@ -89,7 +89,7 @@ listed in `.gitignore` and **never reaches the GitHub repository**. A committed
 `appsettings.Production.example.json` sits beside it as the template:
 
 ```bash
-cd backend/src/MoizPos
+cd src/MoizPos
 copy appsettings.Production.example.json appsettings.Production.json
 ```
 
@@ -146,7 +146,7 @@ setx ASPNETCORE_ENVIRONMENT Production /M
 
 This is safe *because that file is gitignored*. If it ever stops being ignored, the password and
 signing key go into the GitHub repository's history permanently — removing them later does not
-remove them from history. Check with `git check-ignore -v backend/src/MoizPos/appsettings.Production.json`
+remove them from history. Check with `git check-ignore -v src/MoizPos/appsettings.Production.json`
 before committing anything under that folder.
 
 The API refuses to start if `Jwt:Key` is missing or shorter than 32 characters, rather than
@@ -216,9 +216,9 @@ back before it will proceed.
 
 ```bash
 git pull
-cd backend  && dotnet test          # both suites must be green before deploying
-cd frontend && npm run test && npm run build
-dotnet run --project backend/src/MoizPos -- migrate
+dotnet test                                # both suites must be green before deploying
+cd ../frontend && npm run test && npm run build
+dotnet run --project src/MoizPos -- migrate
 # restart the API
 ```
 
