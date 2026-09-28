@@ -153,7 +153,7 @@ public sealed class DocumentSharingTests
     // ================================================================
 
     [Fact]
-    public async Task A_share_link_carries_a_wa_me_url_addressed_to_the_customer()
+    public async Task A_share_link_carries_a_whatsapp_url_addressed_to_the_customer()
     {
         var admin = await ClientAsync(UserRole.Admin);
         var (invoiceId, _) = await CreateSaleAsync(admin);
@@ -163,7 +163,7 @@ public sealed class DocumentSharingTests
         share.GetProperty("shareUrl").GetString().Should().Contain("/api/public/documents/");
 
         var whatsApp = share.GetProperty("whatsAppUrl").GetString();
-        whatsApp.Should().StartWith("https://wa.me/923001234567?text=");
+        whatsApp.Should().StartWith("https://api.whatsapp.com/send?phone=923001234567&text=");
 
         // wa.me cannot attach a file, so the receipt travels as a link inside the message.
         Uri.UnescapeDataString(whatsApp!).Should().Contain("/api/public/documents/");

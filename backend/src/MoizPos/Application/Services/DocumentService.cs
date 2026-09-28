@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MoizPos.Application.Abstractions;
+using MoizPos.Application.Calculations;
 using MoizPos.Application.Documents;
 using MoizPos.Application.Time;
 using MoizPos.Domain.Enums;
@@ -20,6 +21,19 @@ public sealed record ShareLinkResult(
 
 public sealed record ResolvedDocument(DocumentType DocumentType, long ReferenceId);
 
+/// <summary>
+/// A payment reminder, prepared for the shopkeeper to send. Links are null when the customer has
+/// no usable number — the screen disables both and says why, as it does for a receipt.
+/// </summary>
+/// <param name="UnpaidSince">The oldest purchase still unpaid; the due date runs from it.</param>
+public sealed record ReminderResult(
+    string? WhatsAppUrl,
+    string? SmsUrl,
+    decimal Outstanding,
+    DateOnly UnpaidSince,
+    DateOnly DueOn,
+    int MonthsOverdue);
+
 public interface IDocumentService
 {
     Task<byte[]> RenderInvoiceAsync(long invoiceId, CancellationToken cancellationToken = default);
@@ -34,6 +48,12 @@ public interface IDocumentService
         DocumentType documentType, long referenceId, long userId,
         string? suppliedMobileNumber = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// What a customer owes today and by when, as WhatsApp and SMS messages. Refused when they
+    /// owe nothing. The one message about <b>now</b>, so the one that can say "overdue".
+    /// </summary>
+    Task<ReminderResult> CreateReminderAsync(long customerId, CancellationToken cancellationToken = default);
 
     /// <summary>Resolves a raw token to its document, or null for unknown/expired/revoked.</summary>
     Task<ResolvedDocument?> ResolveTokenAsync(string token, CancellationToken cancellationToken = default);
@@ -81,6 +101,7 @@ public sealed class DocumentService : IDocumentService
     private readonly IInvoiceReadRepository _invoices;
     private readonly ICustomerRepository _customers;
     private readonly ICustomerPaymentReadRepository _payments;
+    private readonly ILedgerRepository _ledger;
     private readonly IDocumentTokenRepository _tokens;
     private readonly IPdfRendererPort _renderer;
     private readonly PeriodResolver _periods;
@@ -91,6 +112,7 @@ public sealed class DocumentService : IDocumentService
         IInvoiceReadRepository invoices,
         ICustomerRepository customers,
         ICustomerPaymentReadRepository payments,
+        ILedgerRepository ledger,
         IDocumentTokenRepository tokens,
         IPdfRendererPort renderer,
         PeriodResolver periods,
@@ -100,6 +122,7 @@ public sealed class DocumentService : IDocumentService
         _invoices = invoices;
         _customers = customers;
         _payments = payments;
+        _ledger = ledger;
         _tokens = tokens;
         _renderer = renderer;
         _periods = periods;
@@ -174,8 +197,10 @@ public sealed class DocumentService : IDocumentService
         // it is used here and nowhere else: nothing is written back.
         var sendTo = string.IsNullOrWhiteSpace(mobileNumber) ? suppliedMobileNumber : mobileNumber;
 
-        var whatsApp = WhatsAppLinkBuilder.Build(sendTo, message, shareUrl);
-        var sms = SmsLinkBuilder.Build(sendTo, message, shareUrl);
+        // The link travels on WhatsApp only. An SMS states the figures and nothing else: the owner
+        // asked for it plain, and every character there is paid for.
+        var whatsApp = WhatsAppLinkBuilder.Build(sendTo, message(MessageChannel.WhatsApp, shareUrl));
+        var sms = SmsLinkBuilder.Build(sendTo, message(MessageChannel.Sms, null));
 
         // A missing or unusable number is not an error: the document still has a link the
         // shopkeeper can copy. The UI disables both send buttons and says why (FR-044, FR-121).
@@ -206,7 +231,10 @@ public sealed class DocumentService : IDocumentService
         return new ResolvedDocument(stored.DocumentType, stored.ReferenceId);
     }
 
-    private async Task<(string? Mobile, string Message)> InvoiceMessageAsync(
+    /// <summary>Writes one document's message for a channel, given the link (WhatsApp only).</summary>
+    private delegate string MessageFor(MessageChannel channel, string? documentUrl);
+
+    private async Task<(string? Mobile, MessageFor Message)> InvoiceMessageAsync(
         long invoiceId, CancellationToken cancellationToken)
     {
         var invoice = await _invoices.FindByIdAsync(invoiceId, cancellationToken)
@@ -216,17 +244,30 @@ public sealed class DocumentService : IDocumentService
             ? null
             : await _customers.FindByIdAsync(invoice.Invoice.CustomerId.Value, cancellationToken);
 
+        var saleDate = ShopDate(invoice.Invoice.InvoiceDateUtc);
+        var owes = invoice.Invoice.AmountRemaining > 0m && customer is not null;
+
+        var facts = new InvoiceMessageFacts
+        {
+            InvoiceNumber = invoice.Invoice.InvoiceNumber,
+            CustomerName = customer?.Name,
+            SaleDate = saleDate,
+            Items = invoice.Items.Select(item => new MessageItem(item.ProductName, item.Quantity)).ToList(),
+            Total = invoice.Invoice.Total,
+            AmountPaid = invoice.Invoice.AmountPaid,
+            Remaining = invoice.Invoice.AmountRemaining,
+
+            // A bill states its own terms as of the day it was made: due a month after the sale.
+            // Whether it has since gone overdue is the reminder's job, which speaks about today.
+            Due = owes ? UdhaarDueDate.For(saleDate, asOf: saleDate) : null,
+        };
+
         return (
             customer?.MobileNumber,
-            DocumentMessages.Invoice(
-                _options.Shop,
-                invoice.Invoice.InvoiceNumber,
-                customer?.Name,
-                invoice.Invoice.Total,
-                invoice.Invoice.AmountRemaining));
+            (channel, url) => DocumentMessages.Invoice(channel, _options.Shop, facts, url));
     }
 
-    private async Task<(string? Mobile, string Message)> ReceiptMessageAsync(
+    private async Task<(string? Mobile, MessageFor Message)> ReceiptMessageAsync(
         long paymentId, CancellationToken cancellationToken)
     {
         var payment = await _payments.FindByIdAsync(paymentId, cancellationToken)
@@ -240,11 +281,82 @@ public sealed class DocumentService : IDocumentService
         var balanceAfter = await _payments.BalanceAfterPaymentAsync(paymentId, cancellationToken)
                            ?? customer.OutstandingBalance;
 
+        var paidOn = ShopDate(payment.PaymentDateUtc);
+
+        // And the due date as it stood at that payment, for the same reason: the ledger up to
+        // this entry, with the clock running from the oldest purchase it left unpaid.
+        UdhaarDue? due = null;
+
+        if (balanceAfter > 0m)
+        {
+            var movements = await _ledger.MovementsAsync(customer.Id, paymentId, cancellationToken);
+            var unpaidSince = UdhaarDueDate.OldestUnpaidPurchase(ToMovements(movements));
+
+            due = unpaidSince is { } since ? UdhaarDueDate.For(since, asOf: paidOn) : null;
+        }
+
+        var facts = new ReceiptMessageFacts
+        {
+            ReceiptNumber = payment.ReceiptNumber,
+            CustomerName = customer.Name,
+            PaymentDate = paidOn,
+            AmountReceived = payment.Amount,
+            BalanceAfter = balanceAfter,
+            Due = due,
+        };
+
         return (
             customer.MobileNumber,
-            DocumentMessages.PaymentReceipt(
-                _options.Shop, payment.ReceiptNumber, customer.Name, payment.Amount, balanceAfter));
+            (channel, url) => DocumentMessages.PaymentReceipt(channel, _options.Shop, facts, url));
     }
+
+    public async Task<ReminderResult> CreateReminderAsync(
+        long customerId,
+        CancellationToken cancellationToken = default)
+    {
+        var customer = await _customers.FindByIdAsync(customerId, cancellationToken)
+            ?? throw new NotFoundException("Customer", customerId);
+
+        if (customer.OutstandingBalance <= 0m)
+        {
+            // A reminder for nothing owed is a message the customer should never receive.
+            throw new BusinessRuleViolationException(
+                $"{customer.Name} owes nothing, so there is nothing to remind them of.");
+        }
+
+        var today = ShopDate(_clock.UtcNow);
+        var movements = await _ledger.MovementsAsync(customerId, throughPaymentId: null, cancellationToken);
+
+        // The ledger and the balance always agree (the register's own invariant). If they ever
+        // do not, remind from today rather than refuse — the amount is still owed.
+        var unpaidSince = UdhaarDueDate.OldestUnpaidPurchase(ToMovements(movements)) ?? today;
+        var due = UdhaarDueDate.For(unpaidSince, asOf: today);
+
+        var facts = new ReminderMessageFacts
+        {
+            CustomerName = customer.Name,
+            Outstanding = customer.OutstandingBalance,
+            Due = due,
+        };
+
+        var whatsApp = WhatsAppLinkBuilder.Build(
+            customer.MobileNumber,
+            DocumentMessages.Reminder(MessageChannel.WhatsApp, _options.Shop, facts));
+
+        var sms = SmsLinkBuilder.Build(
+            customer.MobileNumber,
+            DocumentMessages.Reminder(MessageChannel.Sms, _options.Shop, facts));
+
+        return new ReminderResult(
+            whatsApp?.Url, sms, customer.OutstandingBalance, unpaidSince, due.DueOn, due.MonthsOverdue);
+    }
+
+    /// <summary>The shop-local calendar day an instant fell on — the day the customer would name.</summary>
+    private DateOnly ShopDate(DateTime instantUtc) =>
+        DateOnly.FromDateTime(_periods.ToShopLocal(instantUtc));
+
+    private IEnumerable<UdhaarMovement> ToMovements(IEnumerable<LedgerMovementRow> rows) =>
+        rows.Select(row => new UdhaarMovement(ShopDate(row.EntryDateUtc), row.BillAmount, row.PaidAmount));
 
     public Task<IReadOnlyList<ShareLinkSummary>> ListShareLinksAsync(
         DocumentType documentType,

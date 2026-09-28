@@ -89,6 +89,21 @@ public sealed class DocumentsController : ControllerBase
     }
 
     /// <summary>
+    /// A payment reminder for a customer who owes money: what is owed today and by when, prepared
+    /// as WhatsApp and SMS deep links. Nothing is sent by the server and nothing is stored.
+    ///
+    /// <para>Open to Staff: chasing udhaar is counter work, and the message carries only what the
+    /// customer owes the shop — no cost, no profit.</para>
+    /// </summary>
+    [HttpGet("customers/{id:long}/reminder")]
+    public async Task<IActionResult> Reminder(long id, CancellationToken cancellationToken)
+    {
+        var result = await _documents.CreateReminderAsync(id, cancellationToken);
+
+        return Ok(ApiResponse<ReminderResult>.Ok(result));
+    }
+
+    /// <summary>
     /// The links outstanding for one document.
     ///
     /// <para>Admin only: revoking is containment over something already released, which matches

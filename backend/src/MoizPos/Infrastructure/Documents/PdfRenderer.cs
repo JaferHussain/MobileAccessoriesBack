@@ -214,6 +214,8 @@ public sealed class PdfRenderer : IPdfRenderer
         {
             column.Item().LineHorizontal(1);
             column.Item().PaddingTop(4).AlignCenter().Text(message).FontSize(8).Italic();
+            column.Item().PaddingTop(2).AlignCenter()
+                .Text(DocumentMessages.SoftwareCredit.Replace('\n', ' ')).FontSize(7);
         });
     }
 }

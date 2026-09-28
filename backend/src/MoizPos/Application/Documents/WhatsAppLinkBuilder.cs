@@ -44,7 +44,10 @@ public static class WhatsAppLinkBuilder
             ? message
             : $"{message}\n\n{documentUrl}";
 
-        var url = $"https://wa.me/{normalised}?text={Uri.EscapeDataString(text)}";
+        // Straight to api.whatsapp.com, never through wa.me: wa.me only redirects here, and on
+        // WhatsApp Desktop and Web that redirect turns every 4-byte emoji (🏪 📍 👤 🔔 …) into
+        // "�". The text itself is correct UTF-8 either way; it is the hop that breaks it.
+        var url = $"https://api.whatsapp.com/send?phone={normalised}&text={Uri.EscapeDataString(text)}";
 
         return new WhatsAppLink(url, normalised);
     }

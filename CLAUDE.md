@@ -480,6 +480,8 @@ Each of these caused a real bug during the build.
 | Posting FormData through the API client | The client forces `Content-Type: application/json`, so multipart uploads lose their boundary and the server answers 415 | The request interceptor deletes that header when the body is `FormData` |
 | Building a test tag from `Guid…Where(char.IsLetter)` | A GUID's letters are only `a`–`f`, so six characters is a 46k-symbol space, not 300M. Seeds collide and fail a **random** test with a duplicate-key error that looks like a flake in whatever test drew the short straw | Map each hex digit onto its own letter (`HexToLetter` in `ProductSearchTests`) — letters-only, full 16 symbols |
 | "Tidying away" the one-item groups in the rail | **Sell** holds only *New sale*, and for a Staff user **Inventory** holds only *Products* — both look like mistakes and are not. The catalogue (Products, Categories, Brands) is its own **Inventory** group; **Purchasing** keeps only Purchases and Suppliers, so it stays Admin-only and does not render for a salesman at all | `leaves the counter alone in the Sell group`, `keeps the catalogue together under Inventory` and `shows a salesman Products under Inventory, and nothing else there` record all three on purpose |
+| Letting minimal hosting insert `UseRouting()` for you | It goes at the **start** of the pipeline, so `MapFallbackToFile("{*path}")` selects an endpoint before the static-file middlewares run — and `StaticFileMiddleware` skips a request that already has one. **Every** static file then answers `200 text/html` with index.html: product pictures, the app's own JS and CSS, the favicon. The page loads and does nothing | `app.UseRouting()` is called explicitly **after** both `UseStaticFiles` calls. `BundledAppStaticFileTests` fails if it moves; the guard is verified by removing the line |
+| Assuming the suite covers the deployed pipeline | The test host's content root is an empty temp directory, so it has no `wwwroot` — `counterAppIsBundled` is false and neither the SPA fallback nor wwwroot static files are ever registered. The shape the shop actually runs in went untested for as long as it existed | `BundledAppStaticFileTests` builds its own host WITH a wwwroot. Anything about serving the bundled app belongs there |
 | Adding a route without a rail icon | Icons live in `index.css` keyed on `href`, not in markup (adding an element would change each link's text, which the nav tests read). A new module ships looking unfinished beside the rest — it happened twice | `AppShell.test.tsx` now reads the stylesheet and fails naming any link with no `::before` rule. The guard is verified: removing one reddens it |
 | Treating `NOT NULL` on an **ENUM** as "the column refuses a missing value" | It refuses an explicit NULL and nothing else. **Strict mode does not help**: measured on MySQL 8.0.40 with `STRICT_ALL_TABLES` on, an INSERT omitting `expenses.payment_source` stored the ENUM's **first member** with no error, because MySQL treats it as an implicit default | You cannot stop the coercion, so choose what it lands on. Migration `0025` orders the members `('Bank','Till')` so a forgotten source is **excluded** from the drawer rather than deducted from it. `A_write_that_forgets_the_source_never_lands_on_cash` guards the order |
 | Reordering ENUM members without `ALGORITHM=COPY` | An in-place change can reinterpret the stored index rather than re-mapping by string — turning every `Till` into `Bank` | `0025` states `ALGORITHM=COPY`, and `Both_sources_still_read_back_as_they_were_written` asserts values survived |
@@ -487,6 +489,7 @@ Each of these caused a real bug during the build.
 | An integration test that DELETEs to isolate itself | The test database is shared by every class in `ApiCollection`. Clearing `invoices`/`stock_movements` to reason about one day's figures reddened an unrelated reporting test | Seed your own data and assert deltas, or work on a private past date — never clear a shared table |
 | A test fixture keyed off "today" for a once-only resource | The test database is created once and KEPT, so rows survive between runs. `day_closings` is unique per date, so days derived from today collided with the previous run and every close returned 422 | Draw a random base offset once per run (`RunBaseOffset` in `DayClosingTests`) so each run works on untouched dates |
 | Reading a MySQL `DATE` into a `DateOnly` | Throws at materialisation — Dapper has no built-in handler | `DapperConfig` registers `DateOnlyHandler`; a trading day is a date with no time and no zone, and must never be carried as a `DateTime` something can shift across midnight |
+| Building the WhatsApp link on `wa.me` | `wa.me` only redirects to `api.whatsapp.com`, and on WhatsApp Desktop/Web that hop turns every 4-byte emoji (🏪 📍 👤 🔔) into `�` — the shop's messages arrived that way while the encoded bytes were perfect | `WhatsAppLinkBuilder` links straight to `api.whatsapp.com/send?phone=…&text=…`; `Never_goes_through_the_wa_me_redirect_that_breaks_emoji` guards it |
 | Passing an enum property straight to Dapper in an INSERT/UPDATE | No enum type handler is registered, so it writes as the underlying int — any `CHECK (col IN (...))` on that column then rejects every write | Spell it out: `saleType = customer.SaleType.ToString()`, matching every other enum column in this schema |
 
 ## Non-negotiables
@@ -536,8 +539,20 @@ ledger. All of it was built and tested long before any screen offered it (featur
   message in the counter device's own app and the shopkeeper taps Send. The shop holds no
   messaging account, registers no sender id, and pays nothing per message. Do not replace either
   with a gateway without deciding to take on that cost.
-- **SMS is the fallback, not the default.** 160 characters against a long share link means two or
-  three charged parts; WhatsApp has no such limit.
+- **SMS is the fallback, not the default — and it is plain on purpose.** WhatsApp carries emoji,
+  bold amounts, the receipt link, the shop's number and the Asyntex credit. SMS carries the
+  figures only: **no link, no contact line, no credit, no emoji** (the owner's choice). One emoji
+  re-encodes an SMS as UCS-2 — 70 characters a part instead of 160 — so
+  `An_sms_carries_no_link_no_contact_line_no_credit_and_no_emoji` pins it to the GSM alphabet.
+- **Udhaar is due one month after the oldest purchase still unpaid** (`UdhaarDueDate`, pure).
+  Payments settle the oldest debt first, so a small part payment never restarts the clock; past
+  the date it rolls forward a month at a time and counts months overdue. Always counted from the
+  purchase with `AddMonths`, never chained from the last due date, or one February moves every
+  31st to the 28th for good.
+- **A bill or receipt states its due date as of its own moment** (sale day; the ledger up to that
+  payment), the same discipline as `balance_after`. Only the **reminder**
+  (`GET /api/customers/{id}/reminder`, any signed-in user, 422 when nothing is owed) speaks about
+  today, so only it can say "overdue".
 - **Number normalisation is shared** (`WhatsAppLinkBuilder.NormaliseNumber`, reused by
   `SmsLinkBuilder`). Two copies would eventually disagree about what a valid number is.
 - **Message wording lives in `DocumentMessages`, not on either channel builder.** It moved there

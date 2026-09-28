@@ -45,13 +45,31 @@ public sealed class WhatsAppLinkTests
     private static readonly ShopDetails Shop = new();
 
     [Fact]
-    public void Builds_a_wa_me_link_addressed_to_the_customer()
+    public void Builds_a_direct_whatsapp_link_addressed_to_the_customer()
     {
         var link = WhatsAppLinkBuilder.Build("03001234567", "Hello");
 
         link.Should().NotBeNull();
-        link!.Url.Should().StartWith("https://wa.me/923001234567?text=");
+        link!.Url.Should().StartWith("https://api.whatsapp.com/send?phone=923001234567&text=");
         link.NormalisedNumber.Should().Be("923001234567");
+    }
+
+    [Fact]
+    public void Never_goes_through_the_wa_me_redirect_that_breaks_emoji()
+    {
+        // wa.me redirects to api.whatsapp.com, and on WhatsApp Desktop and Web that hop mangles
+        // every 4-byte emoji (🏪 📍 👤 🔔 …) into "�". Seen on the shop's own messages.
+        WhatsAppLinkBuilder.Build("03001234567", "Hello")!.Url.Should().NotContain("wa.me");
+    }
+
+    [Fact]
+    public void Carries_four_byte_emoji_as_their_exact_utf8_bytes()
+    {
+        var link = WhatsAppLinkBuilder.Build("03001234567", "🏪 Shop ⚠️ 🙏")!;
+
+        // 🏪 is U+1F3EA: four UTF-8 bytes, escaped as one character, never as two broken halves.
+        link.Url.Should().Contain("%F0%9F%8F%AA");
+        Uri.UnescapeDataString(link.Url.Split("text=")[^1]).Should().Be("🏪 Shop ⚠️ 🙏");
     }
 
     [Fact]

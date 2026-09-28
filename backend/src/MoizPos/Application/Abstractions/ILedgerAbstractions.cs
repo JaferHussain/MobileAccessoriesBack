@@ -53,6 +53,28 @@ public interface ILedgerRepository
 
     Task<CustomerSummaryRow> SummaryForCustomerAsync(
         long customerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Every movement in a customer's account, in the order it was written — what the due-date
+    /// rule needs to find the oldest purchase still unpaid.
+    /// </summary>
+    /// <param name="throughPaymentId">
+    /// Stop at the entry this payment wrote, so a receipt states the due date as it stood when the
+    /// money was taken — the same reason it states that entry's balance and not today's. Null for
+    /// the whole ledger.
+    /// </param>
+    Task<IReadOnlyList<LedgerMovementRow>> MovementsAsync(
+        long customerId, long? throughPaymentId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>One ledger movement, with the instant it was written.</summary>
+public sealed record LedgerMovementRow
+{
+    public DateTime EntryDateUtc { get; init; }
+
+    public decimal BillAmount { get; init; }
+
+    public decimal PaidAmount { get; init; }
 }
 
 /// <summary>Write side of receiving money from a customer.</summary>

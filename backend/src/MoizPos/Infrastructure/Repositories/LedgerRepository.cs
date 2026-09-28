@@ -85,6 +85,34 @@ public sealed class LedgerRepository : ILedgerRepository
             """,
             new { customerId });
     }
+
+    public async Task<IReadOnlyList<LedgerMovementRow>> MovementsAsync(
+        long customerId,
+        long? throughPaymentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        // Ordered by id — the order entries were written. An opening balance is not back-dated, so
+        // id order and time order agree.
+        var rows = await connection.QueryAsync<LedgerMovementRow>(
+            """
+            SELECT entry_date_utc AS EntryDateUtc,
+                   bill_amount    AS BillAmount,
+                   paid_amount    AS PaidAmount
+            FROM ledger_entries
+            WHERE customer_id = @customerId
+              AND (@throughPaymentId IS NULL OR id <= (
+                    SELECT p.id FROM ledger_entries p
+                    WHERE p.entry_type = 'Payment' AND p.reference_id = @throughPaymentId
+                    ORDER BY p.id
+                    LIMIT 1))
+            ORDER BY id;
+            """,
+            new { customerId, throughPaymentId });
+
+        return rows.AsList();
+    }
 }
 
 /// <inheritdoc />

@@ -343,6 +343,29 @@ app.UseStaticFiles(new StaticFileOptions
     RequestPath = $"/{productImageRoot}",
 });
 
+// Routing is placed HERE, deliberately, and not left to be inserted for us.
+//
+// Minimal hosting adds UseRouting() at the very START of the pipeline when it is not called
+// explicitly. That puts endpoint selection BEFORE the two UseStaticFiles calls above — and
+// StaticFileMiddleware skips a request that already has an endpoint selected. Since
+// MapFallbackToFile below matches every path that is not /api, EVERY static request matched the
+// fallback and was answered with index.html: product pictures, the SPA's own JavaScript and
+// stylesheets, the favicon, all of them 200 OK with Content-Type text/html.
+//
+// Calling it here means static files get their chance first and routing only sees what is left.
+// The integration suite could never have caught this: the test host bundles no wwwroot, so the
+// fallback is not registered, no endpoint is ever selected, and the static middleware works.
+// A request under /content that the static files above did not serve means the FILE is missing.
+//
+// Without this it falls through to the authorization middleware, which applies the fallback
+// policy even to requests that matched no endpoint — so a missing picture answered 401, reading
+// as a permissions problem when the truth is "that file is not on this server". Anonymous on
+// purpose: an <img> tag sends no Authorization header, which is also why the static middleware
+// above sits before UseAuthentication.
+app.MapGet("/content/{**path}", () => Results.NotFound()).AllowAnonymous();
+
+app.UseRouting();
+
 app.UseCors(CounterCorsPolicy);
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -363,27 +386,37 @@ if (counterAppIsBundled)
     // policy, and an unauthenticated visitor could never reach the login screen.
     // The regex excludes /api: without it a mistyped API path returns the HTML page with a 200,
     // and a client bug looks like a working screen instead of the 404 it is.
-    app.MapFallbackToFile("{*path:regex(^(?!api/).*$)}", "index.html").AllowAnonymous();
+    // The regex excludes /api AND /content.
+    //
+    // /api: without it a mistyped API path returns the HTML page with a 200, and a client bug
+    // looks like a working screen instead of the 404 it is.
+    //
+    // /content: a product picture whose FILE is missing must fail honestly. Answering with
+    // index.html made "the file is not on this server" indistinguishable from "here is your
+    // picture" at the network level — a 200 carrying 465 bytes of HTML. That is exactly how a
+    // deployment that had the database rows but none of the image files looked healthy while
+    // every photograph on every screen showed the placeholder.
+    app.MapFallbackToFile("{*path:regex(^(?!api/|content/).*$)}", "index.html").AllowAnonymous();
 }
 
 // ---------------------------------------------------------------- first run
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
+//await using (var scope = app.Services.CreateAsyncScope())
+//{
+  //  var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
 
-    if (await seeder.SeedAsync())
-    {
+    //if (await seeder.SeedAsync())
+    //{
         // Uses the application's logger, not Serilog's static Log — the static logger is never
         // initialised here, so a warning sent there would silently vanish.
-        scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
-            .CreateLogger("MoizPos.Startup")
-            .LogWarning(
-                "Created the default administrator '{Username}' with password '{Password}'. " +
-                "CHANGE THIS PASSWORD before the shop uses the system.",
-                DatabaseSeeder.DefaultUsername,
-                DatabaseSeeder.DefaultPassword);
-    }
-}
+      //  scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+        //    .CreateLogger("MoizPos.Startup")
+          //  .LogWarning(
+              //  "Created the default administrator '{Username}' with password '{Password}'. " +
+                //"CHANGE THIS PASSWORD before the shop uses the system.",
+              //  DatabaseSeeder.DefaultUsername,
+            //    DatabaseSeeder.DefaultPassword);
+    //}
+//}
 
 app.Run();
 

@@ -129,19 +129,24 @@ public sealed class ShareLinkChannelTests
 
         Text(share, "smsUrl").Should().StartWith("sms:")
             .And.Contain("923001234567", "the same normalised number both channels use");
-        Text(share, "whatsAppUrl").Should().StartWith("https://wa.me/");
+        Text(share, "whatsAppUrl").Should().StartWith("https://api.whatsapp.com/send?phone=");
     }
 
     [Fact]
-    public async Task The_sms_carries_the_link_in_its_body()
+    public async Task The_sms_states_the_figures_but_carries_no_link()
     {
         var admin = await AdminAsync();
         var share = await ShareAsync(admin, await SaleWithCustomerAsync(admin, "03001234567"));
 
-        var sms = Text(share, "smsUrl")!;
+        var sms = Uri.UnescapeDataString(Text(share, "smsUrl")!);
+        var whatsApp = Uri.UnescapeDataString(Text(share, "whatsAppUrl")!);
 
+        // The owner's choice: an SMS is the figures alone. Every character there is paid for, and
+        // the link stays on WhatsApp, which costs nothing per line.
         sms.Should().Contain("body=", "the message is prepared for the shopkeeper to send");
-        Uri.UnescapeDataString(sms).Should().Contain(Text(share, "shareUrl")!);
+        sms.Should().Contain("Total Amount");
+        sms.Should().NotContain(Text(share, "shareUrl")!);
+        whatsApp.Should().Contain(Text(share, "shareUrl")!);
     }
 
     [Fact]

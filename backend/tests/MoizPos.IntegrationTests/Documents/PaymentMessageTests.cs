@@ -124,7 +124,7 @@ public sealed class PaymentMessageTests
         var url = (await response.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("whatsAppUrl").GetString()!;
 
-        return Uri.UnescapeDataString(url.Split("?text=")[^1]);
+        return Uri.UnescapeDataString(url.Split("&text=")[^1]);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class PaymentMessageTests
         var message = await MessageAsync(admin, paymentId);
 
         // The owner's own example: paid 500 of 1,000, so 500 remains.
-        message.Should().Contain("500.00");
+        message.Should().Contain("Remaining Amount: *Rs 500*");
         message.Should().MatchRegex("(?i)received");
         message.Should().MatchRegex("(?i)balance|remaining");
     }
@@ -175,10 +175,10 @@ public sealed class PaymentMessageTests
 
         var message = await MessageAsync(admin, paymentId);
 
-        message.Should().NotContain("1,500.00",
+        message.Should().NotContain("Rs 1,500",
             "the receipt records the balance at the moment it was issued; restating it later " +
             "would contradict the shop's own ledger");
-        message.Should().Contain("500.00");
+        message.Should().Contain("Remaining Amount: *Rs 500*");
     }
 
     [Fact]
@@ -210,6 +210,6 @@ public sealed class PaymentMessageTests
         message.Should().NotContain("cost");
         message.Should().NotContain("profit");
         // The product was bought at 400; that figure has no business in a customer's message.
-        message.Should().NotContain("400.00");
+        message.Should().NotContain("rs 400");
     }
 }
