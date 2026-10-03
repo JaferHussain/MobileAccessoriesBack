@@ -32,6 +32,7 @@ public sealed class ReturnTests
             new PurchaseWriteRepository(),
             new StockWriteRepository(),
             new StockMovementWriter(),
+            new SalesmanStockRepository(Factory()),
             new AuditWriter(),
             new SystemClock());
 
@@ -41,6 +42,7 @@ public sealed class ReturnTests
             new InvoiceWriteRepository(),
             new CustomerRepository(Factory()),
             new StockMovementWriter(),
+            new SalesmanStockRepository(Factory()),
             new AuditWriter(),
             new SystemClock());
 
@@ -149,6 +151,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -174,6 +177,7 @@ public sealed class ReturnTests
         await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -199,6 +203,7 @@ public sealed class ReturnTests
         await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -233,6 +238,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -258,6 +264,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 2 }],
             },
@@ -298,6 +305,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -367,6 +375,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -403,6 +412,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -424,6 +434,7 @@ public sealed class ReturnTests
         await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -469,6 +480,7 @@ public sealed class ReturnTests
         await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },
@@ -500,6 +512,7 @@ public sealed class ReturnTests
         var act = async () => await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 3 }],
             },
@@ -572,6 +585,7 @@ public sealed class ReturnTests
         await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Reason = "Faulty charger",
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
@@ -605,6 +619,7 @@ public sealed class ReturnTests
         var result = await Returns().RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
+                RefundMethod = PaymentMethod.Cash,
                 InvoiceId = sale.InvoiceId,
                 Items = [new SaleReturnLine { InvoiceItemId = await FirstInvoiceItemAsync(sale.InvoiceId), Quantity = 1 }],
             },

@@ -69,9 +69,14 @@ public interface IInvoiceService
     /// ambient principal, so the credit rule (FR-051) stays unit-testable without an HTTP
     /// context — and so it cannot be quietly bypassed by a caller that forgets to set one.
     /// </summary>
+    /// <param name="sellerJob">
+    /// The seller's job. A field salesman may not sell below the owner's price, and each of his
+    /// lines records that price and his commission rate. Passed in, like the role, so the rule is
+    /// unit-testable and cannot be skipped by a caller that forgets to look it up.
+    /// </param>
     Task<CreateInvoiceResult> CreateAsync(
         CreateInvoiceRequest request, long userId, UserRole role,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, StaffJob? sellerJob = null);
 }
 
 /// <summary>
@@ -91,6 +96,7 @@ public sealed class InvoiceService : IInvoiceService
     private readonly IInvoiceWriteRepository _invoices;
     private readonly ICustomerRepository _customers;
     private readonly IStockMovementWriter _stockMovements;
+    private readonly ISalesmanStockRepository _salesmanStock;
     private readonly IAuditWriter _audit;
     private readonly IClock _clock;
 
@@ -99,6 +105,7 @@ public sealed class InvoiceService : IInvoiceService
         IInvoiceWriteRepository invoices,
         ICustomerRepository customers,
         IStockMovementWriter stockMovements,
+        ISalesmanStockRepository salesmanStock,
         IAuditWriter audit,
         IClock clock)
     {
@@ -106,6 +113,7 @@ public sealed class InvoiceService : IInvoiceService
         _invoices = invoices;
         _customers = customers;
         _stockMovements = stockMovements;
+        _salesmanStock = salesmanStock;
         _audit = audit;
         _clock = clock;
     }
@@ -114,7 +122,8 @@ public sealed class InvoiceService : IInvoiceService
         CreateInvoiceRequest request,
         long userId,
         UserRole role,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        StaffJob? sellerJob = null)
     {
         if (request.Items.Count == 0)
         {
@@ -168,6 +177,17 @@ public sealed class InvoiceService : IInvoiceService
             request.OrderDiscount,
             request.AmountPaid);
 
+        // Where the goods physically are. A field salesman sells out of his own bag; the counter
+        // sells what is on the shelf — owned, less what salesmen carry. Locking reads, taken after
+        // the product lock every stock change holds, so neither can go stale (SalesmanStockRules).
+        var isFieldSale = sellerJob == StaffJob.FieldSales;
+        var inHisBag = isFieldSale
+            ? await _salesmanStock.HoldingAsync(uow, userId, productIds, cancellationToken)
+            : new Dictionary<long, int>();
+        var heldBySalesmen = isFieldSale
+            ? new Dictionary<long, int>()
+            : await _salesmanStock.HeldBySalesmenAsync(uow, productIds, cancellationToken);
+
         // Stock and price checked across every line before writing anything: a sale is all or
         // nothing, so a problem on line three must not leave lines one and two deducted.
         foreach (var item in request.Items)
@@ -186,11 +206,57 @@ public sealed class InvoiceService : IInvoiceService
                     "that is what sets its price and puts it in stock.");
             }
 
-            if (product.QuantityOnHand < item.Quantity)
+            if (isFieldSale)
             {
-                throw new InsufficientStockException(
-                    product.Name, product.QuantityOnHand, item.Quantity);
+                var carrying = inHisBag.GetValueOrDefault(product.Id);
+
+                if (carrying < item.Quantity)
+                {
+                    throw new InsufficientStockException(
+                        product.Name, carrying, item.Quantity,
+                        $"You are carrying {carrying} of '{product.Name}' — {item.Quantity} cannot be sold. " +
+                        "Ask the owner to issue more.");
+                }
+
+                continue;
             }
+
+            var held = heldBySalesmen.GetValueOrDefault(product.Id);
+            var atShop = SalesmanStockRules.AtShop(product.QuantityOnHand, held);
+
+            if (atShop < item.Quantity)
+            {
+                throw held > 0
+                    ? new InsufficientStockException(
+                        product.Name, atShop, item.Quantity,
+                        $"Only {atShop} of '{product.Name}' are in the shop — {held} more are with the salesman. " +
+                        $"{item.Quantity} were asked for.")
+                    : new InsufficientStockException(product.Name, product.QuantityOnHand, item.Quantity);
+            }
+        }
+
+        // A field salesman may not sell below the owner's price (the owner's rule, not a discount he
+        // can give). Measured on what each unit really fetched — after its line discount and its
+        // share of any whole-bill discount — against the price the counter quotes for this sale
+        // type, read from the LOCKED row. Before the first write, so a refusal leaves nothing.
+        var basePrices = new decimal[request.Items.Count];
+
+        for (var index = 0; index < request.Items.Count && isFieldSale; index++)
+        {
+            var item = request.Items[index];
+            var product = byId[item.ProductId];
+            var basePrice = Commission.BasePrice(request.SaleType, product.RetailPrice, product.WholesalePrice);
+            var effective = ReturnPricing.EffectiveUnitPrice(
+                totals.Lines[index].LineTotal, item.Quantity, totals.Subtotal, totals.Total);
+
+            if (Commission.IsBelowBase(effective, basePrice))
+            {
+                throw new BusinessRuleViolationException(
+                    $"'{product.Name}' cannot be sold below the owner's price of Rs {basePrice:N0}. " +
+                    $"This sale would fetch Rs {effective:N2} a unit after discounts.");
+            }
+
+            basePrices[index] = basePrice;
         }
 
         if (totals.AmountRemaining > 0m && customerId is null)
@@ -206,9 +272,24 @@ public sealed class InvoiceService : IInvoiceService
         //
         // Placed here deliberately — after pricing and the stock check, before the first write —
         // so a refusal leaves no invoice, no stock movement and no balance change (FR-055).
+        //
+        // A field salesman may also leave money owing — but only for a customer the OWNER has
+        // marked as an udhaar customer (UdhaarAuthority). An existing customer only: one created
+        // during this sale cannot have been marked by anyone.
         if (totals.AmountRemaining > 0m && role != UserRole.Admin)
         {
-            throw new CreditRequiresAdminException(totals.AmountRemaining);
+            var isUdhaarCustomer = request.CustomerId is { } existingId
+                && (await _customers.FindByIdAsync(existingId, cancellationToken))?.CreditAllowed == true;
+
+            if (!UdhaarAuthority.MayLeaveOwing(role, sellerJob, isUdhaarCustomer))
+            {
+                throw sellerJob == StaffJob.FieldSales
+                    ? new CreditRequiresAdminException(
+                        totals.AmountRemaining,
+                        $"This customer is not one of the owner's udhaar customers, so this sale cannot leave " +
+                        $"Rs {totals.AmountRemaining:N2} unpaid. Take the full amount, or ask the owner to mark them.")
+                    : new CreditRequiresAdminException(totals.AmountRemaining);
+            }
         }
 
         // A cash sale carries no payment reference. Money counted into the drawer came from no
@@ -235,7 +316,10 @@ public sealed class InvoiceService : IInvoiceService
             request.PaymentMethod,
             Trimmed(request.PaymentAccountNumber),
             Trimmed(request.PaymentTransactionId),
-            request.IdempotencyKey, userId, nowUtc, cancellationToken);
+            request.IdempotencyKey, userId, nowUtc,
+            // Sold in the market: its cash is in the salesman's pocket until he hands it over.
+            inField: isFieldSale,
+            cancellationToken);
 
         // Each line snapshots the product's CURRENT cost. Under the shop's latest-cost rule a
         // later purchase overwrites products.cost_price; without this snapshot every historical
@@ -252,7 +336,10 @@ public sealed class InvoiceService : IInvoiceService
                 item.UnitSalePrice,
                 line.LineDiscount,
                 product.CostPrice,
-                line.LineTotal);
+                line.LineTotal,
+                // Snapshotted like the cost: tomorrow's price or rate never rewrites what this earned.
+                isFieldSale ? basePrices[index] : null,
+                isFieldSale ? Commission.DefaultRatePercent : null);
         }).ToList();
 
         await _invoices.InsertInvoiceItemsAsync(uow, invoiceId, itemsToWrite, cancellationToken);
@@ -269,6 +356,14 @@ public sealed class InvoiceService : IInvoiceService
             await _stockMovements.AppendAsync(
                 uow, product.Id, -item.Quantity, newQuantity, StockMovementReason.Sale,
                 invoiceId, userId, note: null, nowUtc, cancellationToken);
+
+            // Out of his bag as well as out of the shop's ownership.
+            if (isFieldSale)
+            {
+                await _salesmanStock.MoveAsync(
+                    uow, userId, product.Id, -item.Quantity, inHisBag[product.Id] - item.Quantity,
+                    SalesmanStockReason.Sold, invoiceId, note: null, userId, nowUtc, cancellationToken);
+            }
 
             await _audit.RecordAsync(
                 uow, "Product", product.Id, "quantity_on_hand",

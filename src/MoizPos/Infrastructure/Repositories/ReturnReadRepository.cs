@@ -72,6 +72,8 @@ public sealed class ReturnReadRepository : IReturnReadRepository
                 sri.discount_total AS DiscountTotal,
                 sri.line_total     AS LineTotal,
                 sr.refund_due      AS RefundDue,
+                CAST(sr.refund_method AS CHAR) AS RefundMethod,
+                (sr.refund_proof_path IS NOT NULL) AS HasRefundProof,
                 sr.reason          AS Reason
             FROM sale_return_items sri
             JOIN sale_returns sr ON sr.id = sri.sale_return_id

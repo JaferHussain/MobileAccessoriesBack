@@ -46,6 +46,7 @@ public sealed class StockService : IStockService
     private readonly IStockMovementRepository _movements;
     private readonly IStockMovementWriter _movementWriter;
     private readonly IAuditWriter _audit;
+    private readonly ISalesmanStockRepository _salesmanStock;
     private readonly IClock _clock;
 
     public StockService(
@@ -54,6 +55,7 @@ public sealed class StockService : IStockService
         IStockMovementRepository movements,
         IStockMovementWriter movementWriter,
         IAuditWriter audit,
+        ISalesmanStockRepository salesmanStock,
         IClock clock)
     {
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -61,6 +63,7 @@ public sealed class StockService : IStockService
         _movements = movements;
         _movementWriter = movementWriter;
         _audit = audit;
+        _salesmanStock = salesmanStock;
         _clock = clock;
     }
 
@@ -122,6 +125,18 @@ public sealed class StockService : IStockService
         {
             // Nothing moved; recording a zero movement would only add noise to the history.
             return product.QuantityOnHand;
+        }
+
+        // A correction counts what the shop OWNS, and goods in a salesman's bag are owned: it can
+        // never go below what salesmen are carrying, or it would describe goods that do not exist.
+        var heldBySalesmen = (await _salesmanStock.HeldBySalesmenAsync(uow, [productId], cancellationToken))
+            .GetValueOrDefault(productId);
+
+        if (newQuantity < heldBySalesmen)
+        {
+            throw new BusinessRuleViolationException(
+                $"The salesman is carrying {heldBySalesmen} of '{product.Name}', so the shop owns at least that many. " +
+                "Count what is on the shelf and add what he carries.");
         }
 
         await _stockWrites.UpdateQuantityAsync(uow, productId, newQuantity, nowUtc, cancellationToken);

@@ -67,6 +67,7 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
         string? idempotencyKey,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
@@ -75,12 +76,12 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
                 (invoice_number, customer_id, invoice_date_utc, sale_type, subtotal, order_discount, total,
                  amount_paid, amount_remaining, net_amount, payment_method,
                  payment_account_number, payment_transaction_id, idempotency_key,
-                 user_id, created_at_utc)
+                 user_id, created_at_utc, in_field)
             VALUES
                 (@invoiceNumber, @customerId, @invoiceDateUtc, @saleType, @subtotal, @orderDiscount, @total,
                  @amountPaid, @amountRemaining, @total, @paymentMethod,
                  @paymentAccountNumber, @paymentTransactionId, @idempotencyKey,
-                 @userId, @nowUtc);
+                 @userId, @nowUtc, @inField);
             SELECT LAST_INSERT_ID();
             """,
             new
@@ -101,6 +102,7 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
                 idempotencyKey,
                 userId,
                 nowUtc,
+                inField,
             },
             unitOfWork.Transaction);
     }
@@ -114,11 +116,11 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
         await unitOfWork.Connection.ExecuteAsync(
             """
             INSERT INTO invoice_items
-                (invoice_id, product_id, product_name, quantity, unit_sale_price, line_discount,
-                 unit_cost_price, line_total)
+                (invoice_id, product_id, product_name, quantity, unit_sale_price, base_unit_price,
+                 commission_rate, line_discount, unit_cost_price, line_total)
             VALUES
-                (@invoiceId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineDiscount,
-                 @UnitCostPrice, @LineTotal);
+                (@invoiceId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @BaseUnitPrice,
+                 @CommissionRate, @LineDiscount, @UnitCostPrice, @LineTotal);
             """,
             items.Select(item => new
             {
@@ -130,6 +132,8 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
                 item.LineDiscount,
                 item.UnitCostPrice,
                 item.LineTotal,
+                item.BaseUnitPrice,
+                item.CommissionRate,
             }),
             unitOfWork.Transaction);
     }

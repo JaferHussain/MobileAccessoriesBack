@@ -46,7 +46,20 @@ public record ProductStaffDto
 
     public decimal SalePrice { get; init; }
 
+    /// <summary>What the shop OWNS — shelf and salesmen's bags together. Low stock is judged on this.</summary>
     public int QuantityOnHand { get; init; }
+
+    /// <summary>On the shelf: owned, less what salesmen carry. What the counter can sell.</summary>
+    public int AtShop { get; init; }
+
+    /// <summary>How many all field salesmen are carrying between them.</summary>
+    public int WithSalesmen { get; init; }
+
+    /// <summary>
+    /// For a field salesman only: how many HE is carrying — the only ones he can sell. Null for
+    /// everyone else, who carries no bag.
+    /// </summary>
+    public int? InYourBag { get; init; }
 
     public bool IsLowStock { get; init; }
 

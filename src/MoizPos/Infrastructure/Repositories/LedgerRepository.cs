@@ -47,7 +47,9 @@ public sealed class LedgerRepository : ILedgerRepository
                     l.bill_amount    AS BillAmount,
                     l.paid_amount    AS PaidAmount,
                     l.balance_after  AS BalanceAfter,
-                    l.note           AS Note
+                    l.note           AS Note,
+                    CAST(COALESCE(i.payment_method, p.payment_method) AS CHAR) AS PaymentMethod,
+                    (COALESCE(i.payment_proof_path, p.payment_proof_path) IS NOT NULL) AS HasProof
              FROM ledger_entries l
              LEFT JOIN invoices i
                  ON l.entry_type = 'Invoice' AND i.id = l.reference_id
@@ -186,16 +188,17 @@ public sealed class CustomerPaymentWriteRepository : ICustomerPaymentWriteReposi
         string? note,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO customer_payments
                 (customer_id, receipt_number, amount, payment_method, payment_date_utc,
-                 is_overpayment, note, user_id, created_at_utc)
+                 is_overpayment, note, user_id, created_at_utc, in_field)
             VALUES
                 (@customerId, @receiptNumber, @amount, @paymentMethod, @nowUtc,
-                 @isOverpayment, @note, @userId, @nowUtc);
+                 @isOverpayment, @note, @userId, @nowUtc, @inField);
             SELECT LAST_INSERT_ID();
             """,
             new
@@ -208,6 +211,7 @@ public sealed class CustomerPaymentWriteRepository : ICustomerPaymentWriteReposi
                 note,
                 userId,
                 nowUtc,
+                inField,
             },
             unitOfWork.Transaction);
     }

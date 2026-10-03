@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using System.Text;
+using System.Data.Common;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -139,6 +140,12 @@ var backupOptions = new BackupOptions
     ProductImageDirectory = Path.Combine(
         builder.Environment.ContentRootPath,
         builder.Configuration["Storage:ProductImageRoot"] ?? "content/products"),
+
+    // And the payment proofs, for the same reason — resolved the same way ImageStorageService
+    // resolves PaymentProofRoot, so the backup reads exactly the folder uploads write to.
+    PaymentProofDirectory = Path.Combine(
+        builder.Environment.ContentRootPath,
+        builder.Configuration["Storage:PaymentProofRoot"] ?? "content/payment-proofs"),
 };
 
 builder.Services.AddSingleton(backupOptions);
@@ -157,6 +164,8 @@ builder.Services.AddHostedService<BackupHostedService>();
 builder.Services.AddSingleton(new ImageStorageOptions
 {
     ProductImageRoot = builder.Configuration["Storage:ProductImageRoot"] ?? "content/products",
+    // The same key the backup reads, so uploads and backups can never name different folders.
+    PaymentProofRoot = builder.Configuration["Storage:PaymentProofRoot"] ?? "content/payment-proofs",
     MaxImageBytes = long.TryParse(builder.Configuration["Storage:MaxImageBytes"], out var maxBytes)
         ? maxBytes
         : 2 * 1024 * 1024,
@@ -172,6 +181,17 @@ builder.Services.AddScoped<IProductRepository, ProductRepository>();
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<IBrandRepository, BrandRepository>();
 builder.Services.AddScoped<ISupplierRepository, SupplierRepository>();
+builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();
+builder.Services.AddScoped<ITransactionProofRepository, TransactionProofRepository>();
+builder.Services.AddScoped<IShopAccountRepository, ShopAccountRepository>();
+builder.Services.AddScoped<ITeamRepository, TeamRepository>();
+builder.Services.AddScoped<ITeamService, TeamService>();
+builder.Services.AddScoped<ICommissionRepository, CommissionRepository>();
+builder.Services.AddScoped<ICommissionService, CommissionService>();
+builder.Services.AddScoped<ISalesmanCashRepository, SalesmanCashRepository>();
+builder.Services.AddScoped<ISalesmanCashService, SalesmanCashService>();
+builder.Services.AddScoped<ISalesmanStockRepository, SalesmanStockRepository>();
+builder.Services.AddScoped<ISalesmanStockService, SalesmanStockService>();
 builder.Services.AddScoped<IPurchaseRepository, PurchaseRepository>();
 builder.Services.AddScoped<IStockMovementRepository, StockMovementRepository>();
 builder.Services.AddScoped<IProductService, ProductService>();
@@ -196,6 +216,7 @@ builder.Services.AddScoped<IDocumentTokenRepository, DocumentTokenRepository>();
 builder.Services.AddScoped<ICustomerPaymentReadRepository, CustomerPaymentReadRepository>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IPurchaseService, PurchaseService>();
+builder.Services.AddScoped<ISupplierLedgerService, SupplierLedgerService>();
 builder.Services.AddScoped<DatabaseSeeder>();
 builder.Services.AddScoped<IAuthService>(provider => new AuthService(
     provider.GetRequiredService<IUserRepository>(),
@@ -296,6 +317,30 @@ var app = builder.Build();
 
 // ---------------------------------------------------------------- pipeline
 app.UseExceptionEnvelope();
+
+// A deploy that skipped `migrate` runs new code against old columns, and every screen used to say
+// "An unexpected error occurred". Read once here; while anything is waiting, API requests are told
+// to run migrate instead. If the database cannot be reached right now the check is skipped — that
+// failure has its own message (DatabaseUnavailableException) and must not stop the API starting.
+IReadOnlyList<string> pendingMigrations;
+
+try
+{
+    pendingMigrations = MigrationRunner.PendingScriptNames(connectionString);
+}
+catch (Exception exception) when (exception is DbException or InvalidOperationException or TimeoutException)
+{
+    pendingMigrations = [];
+    app.Logger.LogWarning(exception, "Could not check for pending database updates at startup.");
+}
+
+if (pendingMigrations.Count > 0)
+{
+    app.Logger.LogCritical(
+        "The database is behind this build. Run migrate. Waiting: {Scripts}", string.Join(", ", pendingMigrations));
+}
+
+app.UseMiddleware<SchemaGuardMiddleware>(pendingMigrations);
 
 if (app.Environment.IsDevelopment())
 {

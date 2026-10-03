@@ -570,7 +570,14 @@ public sealed class DayClosingTests
     public async Task Recent_closings_are_listed_so_a_pattern_of_small_shorts_shows()
     {
         var admin = await ClientAsync(UserRole.Admin);
-        var day = OwnDay(19);
+
+        // The list is the newest 200, and the test database keeps every earlier run's closings on
+        // random past dates — so a random day of our own can sit below the cut and never be listed.
+        // The day after the newest closing is always unclosed and always inside the list.
+        var newest = (await (await admin.GetAsync("/api/day-closings?count=1"))
+                .Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
+            .Data!.EnumerateArray().Select(r => DateOnly.Parse(r.GetProperty("closingDate").GetString()!, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        var day = newest.Count == 0 ? OwnDay(19) : newest[0].AddDays(1);
 
         await CloseAsync(admin, day, 0m, 0m);
 

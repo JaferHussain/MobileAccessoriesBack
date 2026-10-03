@@ -37,9 +37,17 @@ public sealed record SupplierPaymentRequest
 {
     public decimal Amount { get; init; }
 
-    public PaymentMethod PaymentMethod { get; init; } = PaymentMethod.Cash;
+    /// <summary>
+    /// Required, with no default. Defaulting to Cash is what sent every bank transfer to a
+    /// supplier into the evening's drawer count as a short: day close subtracts Cash payments only.
+    /// </summary>
+    public PaymentMethod? PaymentMethod { get; init; }
 
+    /// <summary>A cheque or transaction number. Shown on the supplier's ledger.</summary>
     public string? Note { get; init; }
+
+    /// <summary>Which shop account paid. Optional; only for a non-cash payment.</summary>
+    public long? ShopAccountId { get; init; }
 
     public bool ConfirmOverpayment { get; init; }
 }
@@ -89,8 +97,17 @@ public sealed class SupplierPaymentValidator : AbstractValidator<SupplierPayment
         RuleFor(x => x.Amount)
             .GreaterThan(0).WithMessage("Payment amount must be greater than zero.");
 
+        RuleFor(x => x.PaymentMethod)
+            .NotNull().WithMessage("Say how the supplier was paid — cash, bank transfer, JazzCash…")
+            .Must(method => method is not (PaymentMethod.Credit or PaymentMethod.Partial))
+            .WithMessage("A payment to a supplier is made in cash or by transfer. Credit and Partial describe an unpaid sale.");
+
         RuleFor(x => x.Note)
             .MaximumLength(255).WithMessage("Note cannot exceed 255 characters.");
+
+        RuleFor(x => x.ShopAccountId)
+            .Null().When(x => x.PaymentMethod == Domain.Enums.PaymentMethod.Cash)
+            .WithMessage("A cash payment did not go through a shop account.");
     }
 }
 
@@ -106,11 +123,36 @@ public sealed class SuppliersController : ControllerBase
 {
     private readonly ISupplierRepository _suppliers;
     private readonly IPurchaseService _purchases;
+    private readonly ISupplierLedgerService _ledger;
+    private readonly IShopAccountRepository _accounts;
 
-    public SuppliersController(ISupplierRepository suppliers, IPurchaseService purchases)
+    public SuppliersController(
+        ISupplierRepository suppliers,
+        IPurchaseService purchases,
+        ISupplierLedgerService ledger,
+        IShopAccountRepository accounts)
     {
         _suppliers = suppliers;
         _purchases = purchases;
+        _ledger = ledger;
+        _accounts = accounts;
+    }
+
+    /// <summary>
+    /// The supplier's account: every purchase, return and payment in date order with what was
+    /// owed after each. <paramref name="from"/> and <paramref name="to"/> are shop-local days,
+    /// both inclusive; the result opens on what was already owed before <paramref name="from"/>.
+    /// </summary>
+    [HttpGet("{id:long}/ledger")]
+    public async Task<IActionResult> Ledger(
+        long id,
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
+        CancellationToken cancellationToken = default)
+    {
+        var ledger = await _ledger.LedgerAsync(id, from, to, cancellationToken);
+
+        return Ok(ApiResponse<SupplierLedgerResult>.Ok(ledger));
     }
 
     [HttpGet]
@@ -196,18 +238,24 @@ public sealed class SuppliersController : ControllerBase
         [FromBody] SupplierPaymentRequest request,
         CancellationToken cancellationToken)
     {
-        var newPayable = await _purchases.RecordSupplierPaymentAsync(
+        // The account must be able to carry the method — a bank transfer did not leave a JazzCash wallet.
+        await ShopAccountCheck.EnsureFitsAsync(_accounts, request.ShopAccountId, request.PaymentMethod!.Value, cancellationToken);
+
+        var result = await _purchases.RecordSupplierPaymentAsync(
             new RecordSupplierPaymentRequest
             {
                 SupplierId = id,
                 Amount = request.Amount,
-                PaymentMethod = request.PaymentMethod,
+                // Never null here: the validator refuses a payment that does not say how.
+                PaymentMethod = request.PaymentMethod!.Value,
                 Note = request.Note,
+                ShopAccountId = request.ShopAccountId,
                 ConfirmOverpayment = request.ConfirmOverpayment,
             },
             CurrentUser.Id(User),
             cancellationToken);
 
-        return Ok(ApiResponse<object>.Ok(new { supplierId = id, payableBalance = newPayable }));
+        return Ok(ApiResponse<object>.Ok(
+            new { supplierId = id, paymentId = result.PaymentId, payableBalance = result.NewPayable }));
     }
 }

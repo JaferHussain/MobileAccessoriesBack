@@ -107,11 +107,13 @@ public sealed class InvoicesController : ControllerBase
 {
     private readonly IInvoiceService _invoices;
     private readonly IInvoiceReadRepository _reads;
+    private readonly IUserRepository _users;
 
-    public InvoicesController(IInvoiceService invoices, IInvoiceReadRepository reads)
+    public InvoicesController(IInvoiceService invoices, IInvoiceReadRepository reads, IUserRepository users)
     {
         _invoices = invoices;
         _reads = reads;
+        _users = users;
     }
 
     /// <summary>
@@ -125,6 +127,10 @@ public sealed class InvoicesController : ControllerBase
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
     {
+        // The seller's job decides whether the owner's-price floor and commission apply. Read from
+        // the account, never the request: a salesman must not be able to sell as "the counter".
+        var sellerJob = (await _users.FindByIdAsync(CurrentUser.Id(User), cancellationToken))?.Job;
+
         try
         {
             var result = await _invoices.CreateAsync(
@@ -151,7 +157,8 @@ public sealed class InvoicesController : ControllerBase
                 },
                 CurrentUser.Id(User),
                 CurrentUser.Role(User),
-                cancellationToken);
+                cancellationToken,
+                sellerJob);
 
             return CreatedAtAction(
                 nameof(Get), new { id = result.InvoiceId }, ApiResponse<CreateInvoiceResult>.Ok(result));

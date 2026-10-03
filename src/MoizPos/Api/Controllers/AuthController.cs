@@ -4,6 +4,7 @@ using MoizPos.Application.Abstractions;
 using MoizPos.Application.Contracts.Auth;
 using MoizPos.Application.Contracts.Common;
 using MoizPos.Application.Services;
+using MoizPos.Application.Time;
 
 namespace MoizPos.Api.Controllers;
 
@@ -12,8 +13,15 @@ namespace MoizPos.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly IUserRepository _users;
+    private readonly IClock _clock;
 
-    public AuthController(IAuthService authService) => _authService = authService;
+    public AuthController(IAuthService authService, IUserRepository users, IClock clock)
+    {
+        _authService = authService;
+        _users = users;
+        _clock = clock;
+    }
 
     /// <summary>Signs in and returns an access/refresh token pair (FR-038).</summary>
     [HttpPost("login")]
@@ -25,6 +33,15 @@ public sealed class AuthController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _authService.LoginAsync(request.Username, request.Password, cancellationToken);
+
+        // For the owner's Team screen: who signed in, when, and from what. Only a successful
+        // sign-in, and never a token refresh — a working day would otherwise read as hundreds.
+        await _users.RecordLoginAsync(
+            result.User.Id,
+            _clock.UtcNow,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString() is { Length: > 0 } agent ? agent : null,
+            cancellationToken);
 
         return Ok(ApiResponse<AuthResponse>.Ok(ToResponse(result)));
     }
@@ -83,5 +100,6 @@ public sealed class AuthController : ControllerBase
                 result.User.Id,
                 result.User.Username,
                 result.User.FullName,
-                result.User.Role.ToString()));
+                result.User.Role.ToString(),
+                result.User.Job?.ToString()));
 }

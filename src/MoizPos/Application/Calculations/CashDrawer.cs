@@ -46,7 +46,8 @@ public static class CashDrawer
         decimal cashRefunds,
         decimal cashPaidOut,
         decimal cashToSuppliers,
-        decimal counted)
+        decimal counted,
+        decimal cashFromSalesmen = 0m)
     {
         EnsureNotNegative(openingFloat, "The opening float");
         EnsureNotNegative(cashSales, "Cash sales");
@@ -55,12 +56,17 @@ public static class CashDrawer
         EnsureNotNegative(cashPaidOut, "Cash paid out");
         EnsureNotNegative(cashToSuppliers, "Cash paid to suppliers");
         EnsureNotNegative(counted, "The counted amount");
+        EnsureNotNegative(cashFromSalesmen, "Cash received from salesmen");
 
         // Two ways notes leave the drawer: an expense taken from the till, and a supplier bill
         // settled in cash. The second moves the largest amounts, and leaving it out reported a
         // short for money that had been paid out perfectly legitimately.
+        //
+        // Cash a salesman took in the market reaches the drawer only when he hands it over — that
+        // handover is what comes in here, never his sales themselves (they are excluded upstream).
         var expected =
-            openingFloat + cashSales + cashRecovery - cashRefunds - cashPaidOut - cashToSuppliers;
+            openingFloat + cashSales + cashRecovery + cashFromSalesmen
+            - cashRefunds - cashPaidOut - cashToSuppliers;
 
         return new CashDrawerCount(expected, counted, counted - expected);
     }

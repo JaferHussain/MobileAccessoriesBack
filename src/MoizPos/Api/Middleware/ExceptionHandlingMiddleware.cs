@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MoizPos.Application.Abstractions;
 using MoizPos.Application.Contracts.Common;
 using MoizPos.Application.Services;
 using MoizPos.Domain.Errors;
@@ -95,6 +96,11 @@ public sealed class ExceptionHandlingMiddleware
             // and OverpaymentNotConfirmed are all caller-correctable 400s.
             DomainException ex =>
                 (StatusCodes.Status400BadRequest, ex.Code, ex.Message),
+
+            // 503, and words the shopkeeper can act on. It used to fall through to "unexpected
+            // error", which read like a bug in whatever screen happened to be open at the time.
+            DatabaseUnavailableException ex =>
+                (StatusCodes.Status503ServiceUnavailable, ErrorCodes.DatabaseUnavailable, ex.Message),
 
             // 499 "client closed request": the caller disconnected, so this is not our failure.
             OperationCanceledException =>

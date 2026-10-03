@@ -113,25 +113,27 @@ public sealed class PurchaseWriteRepository : IPurchaseWriteRepository
             unitOfWork.Transaction);
     }
 
-    public async Task InsertSupplierPaymentAsync(
+    public async Task<long> InsertSupplierPaymentAsync(
         IUnitOfWork unitOfWork,
         long supplierId,
         decimal amount,
         PaymentMethod paymentMethod,
         bool isOverpayment,
         string? note,
+        long? shopAccountId,
         long userId,
         DateTime nowUtc,
         CancellationToken cancellationToken = default)
     {
-        await unitOfWork.Connection.ExecuteAsync(
+        return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO supplier_payments
-                (supplier_id, amount, payment_date_utc, payment_method, is_overpayment,
+                (supplier_id, amount, payment_date_utc, payment_method, shop_account_id, is_overpayment,
                  note, user_id, created_at_utc)
             VALUES
-                (@supplierId, @amount, @nowUtc, @paymentMethod, @isOverpayment,
+                (@supplierId, @amount, @nowUtc, @paymentMethod, @shopAccountId, @isOverpayment,
                  @note, @userId, @nowUtc);
+            SELECT LAST_INSERT_ID();
             """,
             new
             {
@@ -141,6 +143,7 @@ public sealed class PurchaseWriteRepository : IPurchaseWriteRepository
                 paymentMethod = paymentMethod.ToString(),
                 isOverpayment,
                 note,
+                shopAccountId,
                 userId,
             },
             unitOfWork.Transaction);

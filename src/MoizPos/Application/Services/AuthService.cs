@@ -230,6 +230,6 @@ public sealed class AuthService : IAuthService
 
         return new AuthResult(
             new TokenPair(accessToken, refreshToken, nowUtc.AddMinutes(60)),
-            new AuthenticatedUser(user.Id, user.Username, user.FullName, user.Role));
+            new AuthenticatedUser(user.Id, user.Username, user.FullName, user.Role, user.Job));
     }
 }

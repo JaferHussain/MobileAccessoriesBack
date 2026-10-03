@@ -6,7 +6,8 @@ public sealed record LoginRequest(string Username, string Password);
 
 public sealed record RefreshRequest(string RefreshToken);
 
-public sealed record AuthUserDto(long Id, string Username, string FullName, string Role);
+/// <param name="Job">Counter or FieldSales for staff; null for the owner. The screens use it to offer only what that job does.</param>
+public sealed record AuthUserDto(long Id, string Username, string FullName, string Role, string? Job = null);
 
 public sealed record AuthResponse(
     string AccessToken,

@@ -24,6 +24,15 @@ public sealed class MySqlConnectionFactory : IDbConnectionFactory
 
     private readonly string _connectionString;
 
+    /// <summary>
+    /// One retry. A dropped attempt waits out the full connect timeout (15 s by default) before it
+    /// fails, so a third attempt would leave the counter staring at a spinner for most of a minute
+    /// — and a drop that outlasts two attempts is not a blip.
+    /// </summary>
+    private const int ConnectAttempts = 2;
+
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
+
     public MySqlConnectionFactory(string connectionString, bool enforceStrictSqlMode = false)
     {
         _enforceStrictSqlMode = enforceStrictSqlMode;
@@ -38,7 +47,19 @@ public sealed class MySqlConnectionFactory : IDbConnectionFactory
         _connectionString = connectionString;
     }
 
-    public async Task<DbConnection> OpenAsync(CancellationToken cancellationToken = default)
+    public Task<DbConnection> OpenAsync(CancellationToken cancellationToken = default) =>
+        ConnectionRetry.OpenAsync(
+            OpenOnceAsync, IsDroppedConnection, ConnectAttempts, RetryDelay, cancellationToken);
+
+    /// <summary>
+    /// A failure to reach the server, as opposed to one the server reported — "Access denied" or
+    /// an unknown database are answered, not dropped, and retrying cannot fix them.
+    /// </summary>
+    private static bool IsDroppedConnection(Exception exception) =>
+        exception is MySqlException { ErrorCode: MySqlErrorCode.UnableToConnectToHost }
+            or MySqlException { IsTransient: true };
+
+    private async Task<DbConnection> OpenOnceAsync(CancellationToken cancellationToken)
     {
         var connection = new MySqlConnection(_connectionString);
 

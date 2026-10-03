@@ -97,4 +97,29 @@ public enum PaymentSource
 
     /// <summary>Paid from the shop's account; the drawer never saw it.</summary>
     Bank = 2,
+}
+
+/// <summary>
+/// What kind of account the shop holds (migration 0031), which decides the payment methods it can
+/// carry: a Bank account carries bank transfers and Raast; a wallet carries its own app's payments.
+/// </summary>
+public enum ShopAccountType
+{
+    Bank = 1,
+    JazzCash = 2,
+    EasyPaisa = 3,
+}
+
+/// <summary>
+/// The work a member of staff does (migration 0032). Both keep the Staff role and its protections;
+/// the job only says which work — so the Team screen, and later commission and carried stock, can
+/// tell a shopkeeper from a salesman. The owner has none.
+/// </summary>
+public enum StaffJob
+{
+    /// <summary>Serves at the shop counter beside the owner.</summary>
+    Counter = 1,
+
+    /// <summary>Sells in the market, away from the shop.</summary>
+    FieldSales = 2,
 }

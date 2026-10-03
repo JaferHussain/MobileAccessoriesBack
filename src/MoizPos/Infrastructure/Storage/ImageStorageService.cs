@@ -47,6 +47,12 @@ public interface IImageStorageService
         CancellationToken cancellationToken = default);
 
     void DeletePaymentProof(string relativePath);
+
+    /// <summary>
+    /// Opens a stored proof for reading, with its content type — or null when the file is gone or
+    /// the path points anywhere outside the proof directory. The caller disposes the stream.
+    /// </summary>
+    (Stream Content, string ContentType)? OpenPaymentProof(string relativePath);
 }
 
 /// <summary>
@@ -182,6 +188,33 @@ public sealed class ImageStorageService : IImageStorageService
 
     public void DeletePaymentProof(string relativePath) =>
         DeleteIfInside(_options.PaymentProofRoot, relativePath);
+
+    public (Stream Content, string ContentType)? OpenPaymentProof(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return null;
+        }
+
+        var fullPath = Path.GetFullPath(
+            Path.Combine(_contentRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        // With the trailing separator, so a sibling folder such as "payment-proofs-old" can never
+        // pass for the proof directory by sharing its prefix.
+        var allowedRoot = Path.GetFullPath(Path.Combine(_contentRoot, _options.PaymentProofRoot))
+            .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        {
+            return null;
+        }
+
+        var contentType = AllowedTypes
+            .FirstOrDefault(pair => pair.Value.Equals(Path.GetExtension(fullPath), StringComparison.OrdinalIgnoreCase))
+            .Key ?? "application/octet-stream";
+
+        return (File.OpenRead(fullPath), contentType);
+    }
 
     /// <summary>
     /// Validates, decodes and writes one image into <paramref name="root"/>, returning its

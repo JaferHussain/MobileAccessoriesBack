@@ -114,9 +114,11 @@ public interface IReturnWriteRepository
         DateTime returnDateUtc,
         decimal totalAmount,
         decimal refundDue,
+        PaymentMethod? refundMethod,
         string? reason,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default);
 
     Task InsertSaleReturnItemsAsync(
@@ -194,6 +196,11 @@ public sealed record SaleReturnRow
 
     /// <summary>Cash handed back, when the original sale was already settled (FR-028).</summary>
     public decimal RefundDue { get; init; }
+
+    /// <summary>How the refund was handed back. Null when nothing was refunded.</summary>
+    public string? RefundMethod { get; init; }
+
+    public bool HasRefundProof { get; init; }
 
     public string? Reason { get; init; }
 }

@@ -1,6 +1,7 @@
 using Dapper;
 using MoizPos.Application.Abstractions;
 using MoizPos.Domain.Entities;
+using MoizPos.Domain.Enums;
 
 namespace MoizPos.Infrastructure.Repositories;
 
@@ -8,7 +9,7 @@ namespace MoizPos.Infrastructure.Repositories;
 public sealed class UserRepository : IUserRepository
 {
     private const string SelectColumns = """
-        id, username, full_name, password_hash, role, is_active, created_at_utc
+        id, username, full_name, password_hash, role, job, is_active, created_at_utc
         """;
 
     private readonly IDbConnectionFactory _connectionFactory;
@@ -42,8 +43,8 @@ public sealed class UserRepository : IUserRepository
 
         return await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO users (username, full_name, password_hash, role, is_active, created_at_utc)
-            VALUES (@Username, @FullName, @PasswordHash, @Role, @IsActive, @CreatedAtUtc);
+            INSERT INTO users (username, full_name, password_hash, role, job, is_active, created_at_utc)
+            VALUES (@Username, @FullName, @PasswordHash, @Role, @Job, @IsActive, @CreatedAtUtc);
             SELECT LAST_INSERT_ID();
             """,
             new
@@ -52,6 +53,8 @@ public sealed class UserRepository : IUserRepository
                 user.FullName,
                 user.PasswordHash,
                 Role = user.Role.ToString(),
+                // Spelled out like every enum column; Dapper would otherwise write the int.
+                Job = user.Job?.ToString(),
                 user.IsActive,
                 CreatedAtUtc = user.CreatedAtUtc == default ? DateTime.UtcNow : user.CreatedAtUtc,
             });
@@ -93,6 +96,35 @@ public sealed class UserRepository : IUserRepository
         await connection.ExecuteAsync(
             "UPDATE users SET password_hash = @passwordHash, updated_at_utc = UTC_TIMESTAMP(6) WHERE id = @id;",
             new { id, passwordHash });
+    }
+
+    public async Task SetJobAsync(long id, StaffJob job, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        await connection.ExecuteAsync(
+            "UPDATE users SET job = @job, updated_at_utc = UTC_TIMESTAMP(6) WHERE id = @id;",
+            new { id, job = job.ToString() });
+    }
+
+    public async Task RecordLoginAsync(
+        long id, DateTime atUtc, string? ipAddress, string? userAgent, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        await connection.ExecuteAsync(
+            """
+            INSERT INTO user_logins (user_id, logged_in_at_utc, ip_address, user_agent)
+            VALUES (@id, @atUtc, @ipAddress, @userAgent);
+            """,
+            new
+            {
+                id,
+                atUtc,
+                ipAddress,
+                // Trimmed to the column: a browser's description is long and never worth a failed sign-in.
+                userAgent = userAgent is { Length: > 255 } ? userAgent[..255] : userAgent,
+            });
     }
 
     public async Task<int> CountActiveAdminsAsync(CancellationToken cancellationToken = default)

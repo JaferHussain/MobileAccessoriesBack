@@ -20,6 +20,7 @@ public static class ErrorCodes
     public const string ConcurrencyConflict = "CONCURRENCY_CONFLICT";
     public const string BusinessRuleViolation = "BUSINESS_RULE_VIOLATION";
     public const string InternalError = "INTERNAL_ERROR";
+    public const string DatabaseUnavailable = "DATABASE_UNAVAILABLE";
 }
 
 /// <summary>Base for every error the domain raises deliberately.</summary>
@@ -42,10 +43,16 @@ public abstract class DomainException : Exception
 public sealed class CreditRequiresAdminException : DomainException
 {
     public CreditRequiresAdminException(decimal amountRemaining)
-        : base(
-            ErrorCodes.CreditRequiresAdmin,
+        : this(
+            amountRemaining,
             $"Only the shop owner can approve udhaar. This sale leaves Rs {amountRemaining:N2} " +
             "unpaid — take the full amount, or ask the owner to complete the sale.")
+    {
+    }
+
+    /// <summary>The same refusal, worded for the case at hand — e.g. a salesman and a customer not marked for udhaar.</summary>
+    public CreditRequiresAdminException(decimal amountRemaining, string message)
+        : base(ErrorCodes.CreditRequiresAdmin, message)
     {
         AmountRemaining = amountRemaining;
     }
@@ -72,9 +79,14 @@ public sealed class SearchTooShortException : DomainException
 public sealed class InsufficientStockException : DomainException
 {
     public InsufficientStockException(string productName, int available, int requested)
-        : base(
-            ErrorCodes.InsufficientStock,
+        : this(productName, available, requested,
             $"Not enough stock for '{productName}'. Available: {available}, requested: {requested}.")
+    {
+    }
+
+    /// <summary>Where the stock is matters to the reader: on the shelf, or in a salesman's bag.</summary>
+    public InsufficientStockException(string productName, int available, int requested, string message)
+        : base(ErrorCodes.InsufficientStock, message)
     {
         ProductName = productName;
         Available = available;

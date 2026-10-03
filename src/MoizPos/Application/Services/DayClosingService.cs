@@ -16,12 +16,15 @@ namespace MoizPos.Application.Services;
 /// stock and paying the electricity bill are different questions, and a shopkeeper reading a
 /// short wants to know which of the two moved.
 /// </param>
+/// <param name="CashFromSalesmen">Cash salesmen handed over today. Their market sales themselves
+/// are not in <paramref name="CashSales"/> — that money was in their pockets, not the drawer.</param>
 public sealed record DayCashMovement(
     decimal CashSales,
     decimal CashRecovery,
     decimal CashRefunds,
     decimal CashPaidOut,
-    decimal CashToSuppliers);
+    decimal CashToSuppliers,
+    decimal CashFromSalesmen);
 
 /// <summary>A day's close, whether already saved or previewed.</summary>
 public sealed record DayClosingDto
@@ -39,6 +42,9 @@ public sealed record DayClosingDto
     public decimal CashPaidOut { get; init; }
 
     public decimal CashToSuppliers { get; init; }
+
+    /// <summary>Cash the field salesmen handed over today, into the drawer.</summary>
+    public decimal CashFromSalesmen { get; init; }
 
     public decimal ExpectedCash { get; init; }
 
@@ -124,7 +130,8 @@ public sealed class DayClosingService : IDayClosingService
 
         var count = CashDrawer.Reconcile(
             openingFloat, movement.CashSales, movement.CashRecovery,
-            movement.CashRefunds, movement.CashPaidOut, movement.CashToSuppliers, counted: 0m);
+            movement.CashRefunds, movement.CashPaidOut, movement.CashToSuppliers, counted: 0m,
+            movement.CashFromSalesmen);
 
         return new DayClosingDto
         {
@@ -135,6 +142,7 @@ public sealed class DayClosingService : IDayClosingService
             CashRefunds = movement.CashRefunds,
             CashPaidOut = movement.CashPaidOut,
             CashToSuppliers = movement.CashToSuppliers,
+            CashFromSalesmen = movement.CashFromSalesmen,
             ExpectedCash = count.Expected,
             // Nothing counted yet. Zero here is "not answered", and the screen asks for it.
             CountedCash = 0m,
@@ -168,7 +176,7 @@ public sealed class DayClosingService : IDayClosingService
         var count = CashDrawer.Reconcile(
             request.OpeningFloat, movement.CashSales, movement.CashRecovery,
             movement.CashRefunds, movement.CashPaidOut, movement.CashToSuppliers,
-            request.CountedCash);
+            request.CountedCash, movement.CashFromSalesmen);
 
         var nowUtc = _clock.UtcNow;
 

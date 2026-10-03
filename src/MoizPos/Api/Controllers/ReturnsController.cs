@@ -6,6 +6,7 @@ using MoizPos.Application.Abstractions;
 using MoizPos.Application.Contracts.Common;
 using MoizPos.Application.Services;
 using MoizPos.Domain.Errors;
+using MoizPos.Domain.Enums;
 
 namespace MoizPos.Api.Controllers;
 
@@ -23,6 +24,9 @@ public sealed record CreateSaleReturnRequest
     public string? Reason { get; init; }
 
     public IReadOnlyList<SaleReturnLineRequest> Items { get; init; } = [];
+
+    /// <summary>How the refund was handed back. Required when the return refunds money.</summary>
+    public PaymentMethod? RefundMethod { get; init; }
 }
 
 public sealed record CreatePurchaseReturnRequest
@@ -127,6 +131,7 @@ public sealed class SaleReturnsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreateSaleReturnRequest request,
+        [FromServices] IUserRepository users,
         CancellationToken cancellationToken)
     {
         var result = await _returns.RecordSaleReturnAsync(
@@ -137,6 +142,8 @@ public sealed class SaleReturnsController : ControllerBase
                 Items = request.Items
                     .Select(i => new SaleReturnLine { InvoiceItemId = i.InvoiceItemId, Quantity = i.Quantity })
                     .ToList(),
+                RefundMethod = request.RefundMethod,
+                InField = (await users.FindByIdAsync(CurrentUser.Id(User), cancellationToken))?.Job == StaffJob.FieldSales,
             },
             CurrentUser.Id(User),
             cancellationToken);

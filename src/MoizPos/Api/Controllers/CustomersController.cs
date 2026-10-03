@@ -25,6 +25,13 @@ public sealed record CustomerUpsertRequest
     /// omit it entirely rather than send a value the server will ignore.
     /// </summary>
     public SaleType? SaleType { get; init; }
+
+    /// <summary>
+    /// The owner's udhaar mark: a field salesman may sell to this customer on credit. Admin-only,
+    /// silently ignored for Staff, exactly like <see cref="SaleType"/> — a salesman must never be
+    /// able to grant himself a customer to give credit to.
+    /// </summary>
+    public bool? CreditAllowed { get; init; }
 }
 
 public sealed record ReceiveCustomerPaymentRequest
@@ -128,6 +135,7 @@ public sealed class CustomersController : ControllerBase
     public async Task<IActionResult> ReceivePayment(
         long id,
         [FromBody] ReceiveCustomerPaymentRequest request,
+        [FromServices] IUserRepository users,
         CancellationToken cancellationToken)
     {
         var result = await _ledger.ReceivePaymentAsync(
@@ -138,6 +146,8 @@ public sealed class CustomersController : ControllerBase
                 PaymentMethod = request.PaymentMethod,
                 Note = request.Note,
                 ConfirmOverpayment = request.ConfirmOverpayment,
+                // From his account, never the request: a salesman cannot collect "at the counter".
+                InField = (await users.FindByIdAsync(CurrentUser.Id(User), cancellationToken))?.Job == StaffJob.FieldSales,
             },
             CurrentUser.Id(User),
             cancellationToken);
@@ -218,6 +228,9 @@ public sealed class CustomersController : ControllerBase
                 SaleType = CurrentUser.Role(User) == UserRole.Admin && request.SaleType is not null
                     ? request.SaleType.Value
                     : Domain.Enums.SaleType.Retail,
+
+                // The owner's decision alone; a customer a salesman creates is never an udhaar customer.
+                CreditAllowed = CurrentUser.Role(User) == UserRole.Admin && request.CreditAllowed == true,
             },
             cancellationToken);
 
@@ -244,6 +257,11 @@ public sealed class CustomersController : ControllerBase
         if (CurrentUser.Role(User) == UserRole.Admin && request.SaleType is not null)
         {
             existing.SaleType = request.SaleType.Value;
+        }
+
+        if (CurrentUser.Role(User) == UserRole.Admin && request.CreditAllowed is not null)
+        {
+            existing.CreditAllowed = request.CreditAllowed.Value;
         }
 
         // OutstandingBalance is untouched: it moves only through invoice, payment and

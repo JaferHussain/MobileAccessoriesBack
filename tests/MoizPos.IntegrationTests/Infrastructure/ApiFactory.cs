@@ -2,6 +2,8 @@ using Dapper;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using MoizPos.Application.Services;
 using MoizPos.Domain.Enums;
 using MoizPos.Infrastructure.Auth;
 
@@ -168,6 +170,19 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             WHERE id = @productId;
             """,
             new { productId, quantity, costPrice, salePrice, wholesalePrice });
+    }
+
+    /// <summary>
+    /// Puts goods in a field salesman's bag through the real service, so the holding and its
+    /// movement are written exactly as the owner's "Issue" writes them. A field salesman can sell
+    /// only what he carries; tests about something else call this before he sells.
+    /// </summary>
+    public async Task IssueToSalesmanAsync(long salesmanId, long productId, int quantity)
+    {
+        using var scope = Services.CreateScope();
+
+        await scope.ServiceProvider.GetRequiredService<ISalesmanStockService>()
+            .IssueAsync(salesmanId, [new SalesmanStockLine(productId, quantity)], "Test seed", salesmanId);
     }
 
     /// <summary>A supplier to buy from. Every purchase has to name one.</summary>

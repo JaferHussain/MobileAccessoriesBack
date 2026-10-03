@@ -53,6 +53,7 @@ public sealed class ReportingTests
             new InvoiceWriteRepository(),
             new CustomerRepository(Factory()),
             new StockMovementWriter(),
+            new SalesmanStockRepository(Factory()),
             new AuditWriter(),
             clock);
 
@@ -64,6 +65,7 @@ public sealed class ReportingTests
             new PurchaseWriteRepository(),
             new StockWriteRepository(),
             new StockMovementWriter(),
+            new SalesmanStockRepository(Factory()),
             new AuditWriter(),
             clock);
 
@@ -106,6 +108,8 @@ public sealed class ReportingTests
             "DELETE FROM invoice_items;",
             "DELETE FROM invoices;",
             "DELETE FROM expenses;",
+            // Commission paid to a salesman counts as a cost in these reports, so it resets with them.
+            "DELETE FROM commission_payouts;",
 
             // Rebuild the derived balances from what actually remains. Purchases and supplier
             // payments both survive the reset; only purchase_returns were deleted.
@@ -218,7 +222,7 @@ public sealed class ReportingTests
 
         await Returns(clock).RecordSaleReturnAsync(
             new RecordSaleReturnRequest
-            { InvoiceId = sale.InvoiceId, Items = [new SaleReturnLine { InvoiceItemId = itemId, Quantity = 1 }] },
+            { InvoiceId = sale.InvoiceId, RefundMethod = PaymentMethod.Cash, Items = [new SaleReturnLine { InvoiceItemId = itemId, Quantity = 1 }] },
             userId);
 
         // FR-027: only 2 units remain sold, so 600 not 900.

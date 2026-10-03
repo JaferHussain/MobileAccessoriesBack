@@ -15,6 +15,9 @@ public sealed class User
 
     public UserRole Role { get; set; }
 
+    /// <summary>A staff member's work — Counter or FieldSales. Null for the owner.</summary>
+    public StaffJob? Job { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     public DateTime CreatedAtUtc { get; set; }
@@ -172,6 +175,12 @@ public sealed class Customer
 
     /// <summary>Always equals the latest ledger entry's BalanceAfter (invariant 2).</summary>
     public decimal OutstandingBalance { get; set; }
+
+    /// <summary>
+    /// Marked by the owner as an udhaar customer: a field salesman may sell to them on credit.
+    /// The owner may give udhaar to anyone regardless (migration 0034).
+    /// </summary>
+    public bool CreditAllowed { get; set; }
 
     /// <summary>
     /// What this customer already owed before the software was in use, carried over from the

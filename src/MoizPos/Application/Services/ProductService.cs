@@ -10,15 +10,17 @@ namespace MoizPos.Application.Services;
 
 public interface IProductService
 {
+    /// <param name="fieldSalesmanId">The caller, when he is a field salesman: each product then
+    /// says how many HE carries. Null for anyone else.</param>
     Task<PagedResult<ProductStaffDto>> SearchAsync(
-        ProductQuery query, UserRole role, CancellationToken cancellationToken = default);
+        ProductQuery query, UserRole role, CancellationToken cancellationToken = default, long? fieldSalesmanId = null);
 
     /// <summary>
     /// One product, priced for the sale being made. The POS re-reads through here when the
     /// salesman switches between retail and wholesale with items already in the cart.
     /// </summary>
     Task<ProductStaffDto> GetAsync(
-        long id, UserRole role, SaleType saleType = SaleType.Retail,
+        long id, UserRole role, SaleType saleType = SaleType.Retail, long? fieldSalesmanId = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -26,7 +28,7 @@ public interface IProductService
     /// comes back, so scanning during a wholesale sale quotes the wholesale price.
     /// </summary>
     Task<ProductStaffDto?> FindByBarcodeAsync(
-        string barcode, UserRole role, SaleType saleType = SaleType.Retail,
+        string barcode, UserRole role, SaleType saleType = SaleType.Retail, long? fieldSalesmanId = null,
         CancellationToken cancellationToken = default);
 
     Task<long> CreateAsync(ProductUpsertRequest request, CancellationToken cancellationToken = default);
@@ -52,21 +54,25 @@ public sealed class ProductService : IProductService
     private readonly IProductRepository _products;
     private readonly ICategoryRepository _categories;
     private readonly IBrandRepository _brands;
+    private readonly ISalesmanStockRepository _salesmanStock;
 
     public ProductService(
         IProductRepository products,
         ICategoryRepository categories,
-        IBrandRepository brands)
+        IBrandRepository brands,
+        ISalesmanStockRepository salesmanStock)
     {
         _products = products;
         _categories = categories;
         _brands = brands;
+        _salesmanStock = salesmanStock;
     }
 
     public async Task<PagedResult<ProductStaffDto>> SearchAsync(
         ProductQuery query,
         UserRole role,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? fieldSalesmanId = null)
     {
         var (page, pageSize) = PagedResult<ProductStaffDto>.Normalize(query.Page, query.PageSize);
 
@@ -89,7 +95,7 @@ public sealed class ProductService : IProductService
 
         var (rows, total) = await _products.SearchAsync(normalized, cancellationToken);
 
-        var items = rows.Select(row => Project(row, role)).ToList();
+        var items = await ProjectAllAsync(rows, role, fieldSalesmanId, cancellationToken);
 
         return new PagedResult<ProductStaffDto>(items, page, pageSize, total);
     }
@@ -98,18 +104,20 @@ public sealed class ProductService : IProductService
         long id,
         UserRole role,
         SaleType saleType = SaleType.Retail,
+        long? fieldSalesmanId = null,
         CancellationToken cancellationToken = default)
     {
         var row = await _products.FindByIdAsync(id, saleType, cancellationToken)
             ?? throw new NotFoundException("Product", id);
 
-        return Project(row, role);
+        return (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken))[0];
     }
 
     public async Task<ProductStaffDto?> FindByBarcodeAsync(
         string barcode,
         UserRole role,
         SaleType saleType = SaleType.Retail,
+        long? fieldSalesmanId = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(barcode))
@@ -119,7 +127,25 @@ public sealed class ProductService : IProductService
 
         var row = await _products.FindByBarcodeAsync(barcode.Trim(), saleType, cancellationToken);
 
-        return row is null ? null : Project(row, role);
+        return row is null ? null : (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken))[0];
+    }
+
+    /// <summary>
+    /// Adds where the stock physically is: one query for what all salesmen carry, and for a field
+    /// salesman one for his own bag. Kept out of the search SQL so search's speed is unchanged.
+    /// </summary>
+    private async Task<List<ProductStaffDto>> ProjectAllAsync(
+        IReadOnlyList<ProductRow> rows, UserRole role, long? fieldSalesmanId, CancellationToken cancellationToken)
+    {
+        var ids = rows.Select(row => row.Id).ToList();
+        var held = await _salesmanStock.HeldBySalesmenForDisplayAsync(ids, cancellationToken);
+        var bag = fieldSalesmanId is { } salesmanId
+            ? await _salesmanStock.HoldingForDisplayAsync(salesmanId, ids, cancellationToken)
+            : null;
+
+        return rows.Select(row => Project(
+                row, role, held.GetValueOrDefault(row.Id), bag is null ? null : bag.GetValueOrDefault(row.Id)))
+            .ToList();
     }
 
     public async Task<long> CreateAsync(
@@ -195,9 +221,11 @@ public sealed class ProductService : IProductService
     }
 
     /// <summary>Projects a row to the shape this role is permitted to see.</summary>
-    public static ProductStaffDto Project(ProductRow row, UserRole role)
+    public static ProductStaffDto Project(ProductRow row, UserRole role, int withSalesmen = 0, int? inYourBag = null)
     {
+        // Judged on what the shop OWNS: goods out with a salesman will still be sold.
         var isLowStock = StockRules.IsLowStock(row.QuantityOnHand, row.MinStockThreshold);
+        var atShop = SalesmanStockRules.AtShop(row.QuantityOnHand, withSalesmen);
 
         if (role != UserRole.Admin)
         {
@@ -215,6 +243,9 @@ public sealed class ProductService : IProductService
                 ImagePath = row.ImagePath,
                 SalePrice = row.SalePrice,
                 QuantityOnHand = row.QuantityOnHand,
+                AtShop = atShop,
+                WithSalesmen = withSalesmen,
+                InYourBag = inYourBag,
                 IsLowStock = isLowStock,
                 IsActive = row.IsActive,
             };
@@ -234,6 +265,9 @@ public sealed class ProductService : IProductService
             ImagePath = row.ImagePath,
             SalePrice = row.SalePrice,
             QuantityOnHand = row.QuantityOnHand,
+            AtShop = atShop,
+            WithSalesmen = withSalesmen,
+            InYourBag = inYourBag,
             IsLowStock = isLowStock,
             IsActive = row.IsActive,
             CostPrice = row.CostPrice,

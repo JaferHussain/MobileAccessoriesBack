@@ -21,6 +21,12 @@ public sealed record ReceivePaymentRequest
 
     /// <summary>Required when the amount exceeds what is owed (FR-022).</summary>
     public bool ConfirmOverpayment { get; init; }
+
+    /// <summary>
+    /// Collected in the market by a field salesman: the cash is in his pocket until he hands it
+    /// over, so the counter drawer does not count it. Set by the controller from his job.
+    /// </summary>
+    public bool InField { get; init; }
 }
 
 public sealed record ReceivePaymentResult(
@@ -107,7 +113,7 @@ public sealed class CustomerLedgerService : ICustomerLedgerService
 
         var paymentId = await _payments.InsertPaymentAsync(
             uow, request.CustomerId, receiptNumber, request.Amount, request.PaymentMethod,
-            isOverpayment: newBalance < 0m, request.Note, userId, nowUtc, cancellationToken);
+            isOverpayment: newBalance < 0m, request.Note, userId, nowUtc, request.InField, cancellationToken);
 
         await _payments.UpdateBalanceAsync(
             uow, request.CustomerId, newBalance, nowUtc, cancellationToken);

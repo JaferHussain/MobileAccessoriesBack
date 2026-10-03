@@ -48,6 +48,9 @@ public sealed record RecordPurchaseResult(
     decimal NewRetailPrice,
     decimal NewWholesalePrice);
 
+/// <param name="PaymentId">What a proof of the transfer is attached to.</param>
+public sealed record SupplierPaymentResult(long PaymentId, decimal NewPayable);
+
 public sealed record RecordSupplierPaymentRequest
 {
     public long SupplierId { get; init; }
@@ -57,6 +60,9 @@ public sealed record RecordSupplierPaymentRequest
     public PaymentMethod PaymentMethod { get; init; } = PaymentMethod.Cash;
 
     public string? Note { get; init; }
+
+    /// <summary>Which shop account paid — checked by the caller against the method.</summary>
+    public long? ShopAccountId { get; init; }
 
     public bool ConfirmOverpayment { get; init; }
 }
@@ -68,7 +74,7 @@ public interface IPurchaseService
         long userId,
         CancellationToken cancellationToken = default);
 
-    Task<decimal> RecordSupplierPaymentAsync(
+    Task<SupplierPaymentResult> RecordSupplierPaymentAsync(
         RecordSupplierPaymentRequest request,
         long userId,
         CancellationToken cancellationToken = default);
@@ -216,7 +222,7 @@ public sealed class PurchaseService : IPurchaseService
             purchaseId, newQuantity, newCost, newPayable, newRetailPrice, newWholesalePrice);
     }
 
-    public async Task<decimal> RecordSupplierPaymentAsync(
+    public async Task<SupplierPaymentResult> RecordSupplierPaymentAsync(
         RecordSupplierPaymentRequest request,
         long userId,
         CancellationToken cancellationToken = default)
@@ -241,9 +247,9 @@ public sealed class PurchaseService : IPurchaseService
 
         var newPayable = Round(supplier.PayableBalance - request.Amount);
 
-        await _purchases.InsertSupplierPaymentAsync(
+        var paymentId = await _purchases.InsertSupplierPaymentAsync(
             uow, request.SupplierId, request.Amount, request.PaymentMethod,
-            isOverpayment: newPayable < 0m, request.Note, userId, nowUtc, cancellationToken);
+            isOverpayment: newPayable < 0m, request.Note, request.ShopAccountId, userId, nowUtc, cancellationToken);
 
         await _purchases.UpdateSupplierPayableAsync(
             uow, request.SupplierId, newPayable, nowUtc, cancellationToken);
@@ -253,7 +259,7 @@ public sealed class PurchaseService : IPurchaseService
 
         await uow.CommitAsync(cancellationToken);
 
-        return newPayable;
+        return new SupplierPaymentResult(paymentId, newPayable);
     }
 
     private static decimal Round(decimal value) =>

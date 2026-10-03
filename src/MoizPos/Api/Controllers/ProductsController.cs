@@ -18,11 +18,29 @@ public sealed class ProductsController : ControllerBase
 {
     private readonly IProductService _products;
     private readonly IStockService _stock;
+    private readonly IUserRepository _users;
 
-    public ProductsController(IProductService products, IStockService stock)
+    public ProductsController(IProductService products, IStockService stock, IUserRepository users)
     {
         _products = products;
         _stock = stock;
+        _users = users;
+    }
+
+    /// <summary>
+    /// The caller, when he is a field salesman — so each product can say how many HE carries, the
+    /// only ones he can sell. Read from his account, never from the request.
+    /// </summary>
+    private async Task<long?> FieldSalesmanIdAsync(CancellationToken cancellationToken)
+    {
+        if (CurrentUser.IsAdmin(User))
+        {
+            return null;
+        }
+
+        var id = CurrentUser.Id(User);
+
+        return (await _users.FindByIdAsync(id, cancellationToken))?.Job == StaffJob.FieldSales ? id : null;
     }
 
     /// <summary>Stock movement history for one product (FR-005).</summary>
@@ -87,7 +105,8 @@ public sealed class ProductsController : ControllerBase
             PageSize = pageSize,
         };
 
-        var result = await _products.SearchAsync(query, CurrentUser.Role(User), cancellationToken);
+        var result = await _products.SearchAsync(
+            query, CurrentUser.Role(User), cancellationToken, await FieldSalesmanIdAsync(cancellationToken));
 
         return Ok(ApiResponse<PagedResult<ProductStaffDto>>.Ok(result));
     }
@@ -101,7 +120,7 @@ public sealed class ProductsController : ControllerBase
         // The POS re-reads through here when the salesman switches sale type mid-cart, so the
         // price returned has to follow that choice.
         var product = await _products.GetAsync(
-            id, CurrentUser.Role(User), saleType, cancellationToken);
+            id, CurrentUser.Role(User), saleType, await FieldSalesmanIdAsync(cancellationToken), cancellationToken);
 
         return Ok(ApiResponse<ProductStaffDto>.Ok(product));
     }
@@ -115,7 +134,7 @@ public sealed class ProductsController : ControllerBase
     {
         // Scanning during a wholesale sale must quote the wholesale price, not the counter one.
         var product = await _products.FindByBarcodeAsync(
-            barcode, CurrentUser.Role(User), saleType, cancellationToken);
+            barcode, CurrentUser.Role(User), saleType, await FieldSalesmanIdAsync(cancellationToken), cancellationToken);
 
         return product is null
             ? NotFound(ApiResponse<object>.Fail(

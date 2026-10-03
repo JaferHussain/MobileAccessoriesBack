@@ -269,6 +269,71 @@ public sealed class AuditAndBackupTests
         }
     }
 
+    /// <summary>
+    /// Payment screenshots are evidence of money that moved, and the database holds only their
+    /// paths. A backup that left them out would restore every sale, payment and refund with its
+    /// proof gone for good — found out only in the dispute the proof existed for.
+    /// </summary>
+    [Fact]
+    public async Task A_backup_carries_the_payment_proofs_beside_the_dump()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"moizpos-backup-{Guid.NewGuid():N}");
+        var proofs = Path.Combine(Path.GetTempPath(), $"moizpos-proofs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(proofs);
+        await File.WriteAllBytesAsync(Path.Combine(proofs, "abc.jpg"), [1, 2, 3]);
+
+        var service = new BackupService(
+            new BackupOptions
+            {
+                Directory = directory,
+                RetainDays = 30,
+                ToolsDirectory = ToolsDirectory(),
+                PaymentProofDirectory = proofs,
+            },
+            _api.ConnectionString,
+            new SystemClock(),
+            new PeriodResolver());
+
+        try
+        {
+            var result = await service.CreateAsync();
+
+            var archive = Path.Combine(directory, result.FileName.Replace(".sql", "-proofs.zip"));
+            File.Exists(archive).Should().BeTrue("the proofs travel with the dump they belong to");
+
+            using var zip = System.IO.Compression.ZipFile.OpenRead(archive);
+            zip.Entries.Select(entry => entry.FullName).Should().Contain("abc.jpg");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+            Directory.Delete(proofs, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task An_old_proof_archive_is_retired_with_its_dump()
+    {
+        // Retiring only the dumps would leave proof zips growing without limit.
+        var (service, directory) = Backup();
+        Directory.CreateDirectory(directory);
+
+        var old = Path.Combine(directory, "moizpos-2026-01-01-020000-proofs.zip");
+        await File.WriteAllBytesAsync(old, [1]);
+        File.SetCreationTimeUtc(old, DateTime.UtcNow.AddDays(-60));
+
+        try
+        {
+            await service.PruneAsync();
+
+            File.Exists(old).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task A_restored_backup_reproduces_the_shops_records()
     {

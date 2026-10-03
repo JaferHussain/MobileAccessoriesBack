@@ -29,6 +29,7 @@ public sealed class StockMovementTests
             new StockMovementRepository(ConnectionFactory()),
             new StockMovementWriter(),
             new AuditWriter(),
+            new SalesmanStockRepository(ConnectionFactory()),
             new SystemClock());
 
     private PurchaseService PurchaseService() =>

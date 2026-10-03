@@ -20,9 +20,20 @@ public sealed record CreateUserRequest
     public string Password { get; init; } = string.Empty;
 
     public UserRole Role { get; init; } = UserRole.Staff;
+
+    /// <summary>
+    /// A staff member's work — Counter (shopkeeper) or FieldSales (salesman). Left out, staff work
+    /// the counter. Refused for the owner: the owner is the owner.
+    /// </summary>
+    public StaffJob? Job { get; init; }
 }
 
-public sealed record UserDto(long Id, string Username, string FullName, string Role, bool IsActive);
+public sealed record SetJobRequest
+{
+    public StaffJob? Job { get; init; }
+}
+
+public sealed record UserDto(long Id, string Username, string FullName, string Role, bool IsActive, string? Job);
 
 public sealed record ResetPasswordRequest(string NewPassword);
 
@@ -54,7 +65,21 @@ public sealed class CreateUserValidator : AbstractValidator<CreateUserRequest>
         RuleFor(x => x.Password)
             .NotEmpty().WithMessage("Password is required.")
             .MinimumLength(8).WithMessage("Password must be at least 8 characters.");
+
+        RuleFor(x => x.Job)
+            .Null().When(x => x.Role == UserRole.Admin)
+            .WithMessage("The owner's account has no job — jobs are for staff.");
+
+        RuleFor(x => x.Job).IsInEnum();
     }
+}
+
+public sealed class SetJobValidator : AbstractValidator<SetJobRequest>
+{
+    public SetJobValidator() =>
+        RuleFor(x => x.Job)
+            .NotNull().WithMessage("Choose a job: Counter or Field sales.")
+            .IsInEnum();
 }
 
 /// <summary>
@@ -88,7 +113,7 @@ public sealed class UsersController : ControllerBase
         var users = await _users.ListAsync(cancellationToken);
 
         var dtos = users
-            .Select(u => new UserDto(u.Id, u.Username, u.FullName, u.Role.ToString(), u.IsActive))
+            .Select(u => new UserDto(u.Id, u.Username, u.FullName, u.Role.ToString(), u.IsActive, u.Job?.ToString()))
             .ToList();
 
         return Ok(ApiResponse<IReadOnlyList<UserDto>>.Ok(dtos));
@@ -114,6 +139,8 @@ public sealed class UsersController : ControllerBase
                 FullName = request.FullName.Trim(),
                 PasswordHash = _passwordHasher.Hash(request.Password),
                 Role = request.Role,
+                // Staff with no job named work the counter — every member of staff did until now.
+                Job = request.Role == UserRole.Staff ? request.Job ?? StaffJob.Counter : null,
                 IsActive = true,
                 CreatedAtUtc = DateTime.UtcNow,
             },
@@ -126,7 +153,26 @@ public sealed class UsersController : ControllerBase
         return StatusCode(
             StatusCodes.Status201Created,
             ApiResponse<UserDto>.Ok(
-                new UserDto(id, username, request.FullName.Trim(), request.Role.ToString(), true)));
+                new UserDto(
+                    id, username, request.FullName.Trim(), request.Role.ToString(), true,
+                    request.Role == UserRole.Staff ? (request.Job ?? StaffJob.Counter).ToString() : null)));
+    }
+
+    /// <summary>Changes a staff member's work — e.g. the shopkeeper moves to selling in the market.</summary>
+    [HttpPut("{id:long}/job")]
+    public async Task<IActionResult> SetJob(long id, [FromBody] SetJobRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _users.FindByIdAsync(id, cancellationToken) ?? throw new NotFoundException("User", id);
+
+        if (user.Role != UserRole.Staff)
+        {
+            throw new BusinessRuleViolationException("The owner's account has no job — jobs are for staff.");
+        }
+
+        await _users.SetJobAsync(id, request.Job!.Value, cancellationToken);
+
+        return Ok(ApiResponse<UserDto>.Ok(
+            new UserDto(user.Id, user.Username, user.FullName, user.Role.ToString(), user.IsActive, request.Job.Value.ToString())));
     }
 
     /// <summary>

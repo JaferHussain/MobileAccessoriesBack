@@ -30,14 +30,36 @@ public sealed record ExpenseRow
     /// </summary>
     public PaymentSource? PaymentSource { get; init; }
 
+    /// <summary>For a Bank expense, which way it went. Null for Till and for older Bank rows.</summary>
+    public PaymentMethod? PaymentMethod { get; init; }
+
+    /// <summary>Whether a proof screenshot is attached. The image itself is fetched by id.</summary>
+    public bool HasProof { get; init; }
+
+    /// <summary>The shop account it was paid from, when one was named.</summary>
+    public long? ShopAccountId { get; init; }
+
+    public string? ShopAccountName { get; init; }
+
+    /// <summary>The bank's or app's reference, when one was given.</summary>
+    public string? TransactionId { get; init; }
+
     public string? Note { get; init; }
 }
 
 public interface IExpenseRepository
 {
-    Task<IReadOnlyList<ExpenseCategory>> ListCategoriesAsync(CancellationToken cancellationToken = default);
+    /// <summary>Active categories only, unless <paramref name="includeInactive"/>.</summary>
+    Task<IReadOnlyList<ExpenseCategory>> ListCategoriesAsync(
+        bool includeInactive = false, CancellationToken cancellationToken = default);
 
     Task<long> CreateCategoryAsync(string name, CancellationToken cancellationToken = default);
+
+    Task<bool> CategoryNameTakenAsync(string name, long? exceptId, CancellationToken cancellationToken = default);
+
+    Task RenameCategoryAsync(long id, string name, CancellationToken cancellationToken = default);
+
+    Task SetCategoryActiveAsync(long id, bool isActive, CancellationToken cancellationToken = default);
 
     Task<(IReadOnlyList<ExpenseRow> Items, int TotalItems)> SearchAsync(
         long? categoryId, DateRangeUtc? range, int page, int pageSize,
@@ -45,7 +67,7 @@ public interface IExpenseRepository
 
     Task<long> CreateAsync(
         long categoryId, decimal amount, DateTime expenseDateUtc, PaymentSource paymentSource,
-        string? note, long userId,
+        PaymentMethod? paymentMethod, long? shopAccountId, string? transactionId, string? note, long userId,
         CancellationToken cancellationToken = default);
 
     Task DeleteAsync(long id, CancellationToken cancellationToken = default);

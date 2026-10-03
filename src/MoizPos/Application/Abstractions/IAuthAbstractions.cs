@@ -47,6 +47,13 @@ public interface IUserRepository
     /// must keep naming who did what.</summary>
     Task SetActiveAsync(long id, bool isActive, CancellationToken cancellationToken = default);
 
+    /// <summary>Sets a staff member's work — Counter or FieldSales.</summary>
+    Task SetJobAsync(long id, StaffJob job, CancellationToken cancellationToken = default);
+
+    /// <summary>Records a successful sign-in, for the owner's Team screen. Never changed afterwards.</summary>
+    Task RecordLoginAsync(
+        long id, DateTime atUtc, string? ipAddress, string? userAgent, CancellationToken cancellationToken = default);
+
     Task UpdatePasswordAsync(
         long id, string passwordHash, CancellationToken cancellationToken = default);
 }
@@ -91,7 +98,8 @@ public sealed record StoredRefreshToken
 }
 
 /// <summary>The signed-in user, as the API sees them.</summary>
-public sealed record AuthenticatedUser(long Id, string Username, string FullName, UserRole Role);
+/// <param name="Job">A staff member's work — Counter or FieldSales. Null for the owner.</param>
+public sealed record AuthenticatedUser(long Id, string Username, string FullName, UserRole Role, StaffJob? Job = null);
 
 /// <summary>The result of a successful sign-in or refresh.</summary>
 public sealed record AuthResult(TokenPair Tokens, AuthenticatedUser User);

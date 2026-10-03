@@ -29,6 +29,7 @@ public sealed class CreateInvoiceTests
             new InvoiceWriteRepository(),
             new CustomerRepository(Factory()),
             new StockMovementWriter(),
+            new SalesmanStockRepository(Factory()),
             new AuditWriter(),
             new SystemClock());
 

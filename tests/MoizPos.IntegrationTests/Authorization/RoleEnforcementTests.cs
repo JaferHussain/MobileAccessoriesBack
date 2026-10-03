@@ -57,6 +57,7 @@ public sealed class RoleEnforcementTests
         "/api/reports/expenses?from=2026-09-01&to=2026-09-30",
         "/api/suppliers",
         "/api/suppliers/1",
+        "/api/suppliers/1/ledger",
         "/api/purchases",
         "/api/expenses",
         "/api/expense-categories",
@@ -357,6 +358,7 @@ public sealed class RoleEnforcementTests
         // Reaches the handler and fails on the data, not on authorization.
         var response = await staff.PostAsJsonAsync("/api/sale-returns", new
         {
+            refundMethod = "Cash",
             invoiceId = 999_999_999,
             items = new[] { new { invoiceItemId = 1, quantity = 1 } },
         });

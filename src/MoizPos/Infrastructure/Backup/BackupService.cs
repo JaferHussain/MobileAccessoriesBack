@@ -24,6 +24,13 @@ public sealed class BackupOptions
     public string ProductImageDirectory { get; init; } = string.Empty;
 
     /// <summary>
+    /// Payment screenshots — the proof behind every non-cash sale, payment, refund and expense.
+    /// Archived beside each dump as <c>-proofs.zip</c>. Left out, a restore would bring back every
+    /// transaction with its proof gone for good. Empty skips it.
+    /// </summary>
+    public string PaymentProofDirectory { get; init; } = string.Empty;
+
+    /// <summary>
     /// Directory holding mysqldump/mysql. Empty means "already on PATH", which is the normal
     /// case on a server; a developer machine often has MySQL installed but not on PATH.
     /// </summary>
@@ -40,6 +47,8 @@ public sealed class BackupService : IBackupService
 
     /// <summary>Pictures ride beside the dump, sharing its timestamp so the pair is obvious.</summary>
     private const string ImageArchiveExtension = "-images.zip";
+
+    private const string ProofArchiveExtension = "-proofs.zip";
 
     private readonly BackupOptions _options;
     private readonly string _connectionString;
@@ -98,23 +107,36 @@ public sealed class BackupService : IBackupService
         // Deliberately after the dump has been verified, and deliberately not fatal: a backup
         // of the shop's money that succeeded must not be discarded because a picture file was
         // locked. The ledger is what cannot be reconstructed; a photograph can be retaken.
-        if (!string.IsNullOrWhiteSpace(_options.ProductImageDirectory))
-        {
-            try
-            {
-                ProductImageArchive.Create(
-                    _options.ProductImageDirectory,
-                    Path.Combine(
-                        _options.Directory,
-                        $"{FilePrefix}{localNow:yyyy-MM-dd-HHmmss}{ImageArchiveExtension}"));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                // Swallowed on purpose, per the reasoning above.
-            }
-        }
+        var stamp = $"{FilePrefix}{localNow:yyyy-MM-dd-HHmmss}";
+
+        ArchiveBeside(_options.ProductImageDirectory, $"{stamp}{ImageArchiveExtension}");
+
+        // The payment proofs, for the same reason and under the same rule: evidence of money that
+        // moved, whose paths alone are all the dump holds.
+        ArchiveBeside(_options.PaymentProofDirectory, $"{stamp}{ProofArchiveExtension}");
 
         return new BackupResult(fileName, info.Length, _clock.UtcNow);
+    }
+
+    /// <summary>
+    /// Zips a picture folder beside the dump. Not fatal, per the reasoning above: a verified
+    /// backup of the shop's money is never discarded because one picture file was locked.
+    /// </summary>
+    private void ArchiveBeside(string sourceDirectory, string archiveName)
+    {
+        if (string.IsNullOrWhiteSpace(sourceDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            ProductImageArchive.Create(sourceDirectory, Path.Combine(_options.Directory, archiveName));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Swallowed on purpose.
+        }
     }
 
     public Task<IReadOnlyList<BackupFile>> ListAsync(CancellationToken cancellationToken = default)
@@ -179,7 +201,9 @@ public sealed class BackupService : IBackupService
         var expired = new System.IO.DirectoryInfo(_options.Directory)
             .GetFiles($"{FilePrefix}*{FileExtension}")
             .Concat(new System.IO.DirectoryInfo(_options.Directory)
-                .GetFiles($"{FilePrefix}*{ImageArchiveExtension}"));
+                .GetFiles($"{FilePrefix}*{ImageArchiveExtension}"))
+            .Concat(new System.IO.DirectoryInfo(_options.Directory)
+                .GetFiles($"{FilePrefix}*{ProofArchiveExtension}"));
 
         foreach (var file in expired)
         {

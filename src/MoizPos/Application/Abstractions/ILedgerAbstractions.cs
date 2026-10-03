@@ -27,6 +27,12 @@ public sealed record LedgerEntryRow
     /// which has to be visible to whoever reads the ledger — not only in the audit trail.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>How the sale or payment was paid. Null for every other kind of entry.</summary>
+    public string? PaymentMethod { get; init; }
+
+    /// <summary>Whether a proof screenshot is attached to that sale or payment.</summary>
+    public bool HasProof { get; init; }
 }
 
 /// <summary>Totals shown on a customer's profile (FR-023).</summary>
@@ -93,6 +99,7 @@ public interface ICustomerPaymentWriteRepository
         string? note,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default);
 
     Task UpdateBalanceAsync(

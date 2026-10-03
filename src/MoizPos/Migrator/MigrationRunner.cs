@@ -34,6 +34,13 @@ public static class MigrationRunner
         }
     }
 
+    /// <summary>
+    /// The scripts this database has not had yet. Read-only — nothing is applied. Empty when the
+    /// database is up to date.
+    /// </summary>
+    public static IReadOnlyList<string> PendingScriptNames(string connectionString) =>
+        BuildEngine(connectionString).GetScriptsToExecute().Select(script => script.Name).ToList();
+
     /// <summary>Scripts embedded in this assembly, in the order DbUp would apply them.</summary>
     public static IReadOnlyList<string> AllScriptNames() =>
         typeof(MigrationRunner).Assembly

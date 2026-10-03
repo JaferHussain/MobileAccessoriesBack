@@ -30,10 +30,14 @@ public sealed class DayClosingRepository : IDayClosingRepository
                 -- the counter, and payment_method does not record how the paid portion arrived.
                 -- Excluding it would understate what is expected and show a false surplus every
                 -- time — which teaches the shopkeeper to ignore the difference.
+                --
+                -- A field salesman's sale is excluded: its cash is in his pocket, not the drawer,
+                -- and reaches the drawer only when he hands it over (CashFromSalesmen below).
                 COALESCE((
                     SELECT SUM(amount_paid) FROM invoices
                     WHERE invoice_date_utc >= @startUtc AND invoice_date_utc < @endUtc
                       AND payment_method IN ('Cash', 'Partial')
+                      AND in_field = FALSE
                 ), 0) AS CashSales,
 
                 -- An old debt paid off today. Not a sale — the goods left weeks ago — but the
@@ -42,13 +46,18 @@ public sealed class DayClosingRepository : IDayClosingRepository
                     SELECT SUM(amount) FROM customer_payments
                     WHERE payment_date_utc >= @startUtc AND payment_date_utc < @endUtc
                       AND payment_method = 'Cash'
+                      AND in_field = FALSE
                 ), 0) AS CashRecovery,
 
-                -- Money handed back on a return. Only where the sale had actually been paid:
-                -- a return against unpaid udhaar reduces a balance and moves no notes.
+                -- Money handed back on a return, in CASH. A return against unpaid udhaar refunds
+                -- nothing; a refund sent by JazzCash or transfer never left the drawer, and
+                -- counting it showed the drawer OVER by that amount. Refunds recorded before
+                -- refund_method existed were all counted as cash, and 0030 marked them Cash.
                 COALESCE((
                     SELECT SUM(refund_due) FROM sale_returns
                     WHERE return_date_utc >= @startUtc AND return_date_utc < @endUtc
+                      AND refund_method = 'Cash'
+                      AND in_field = FALSE
                 ), 0) AS CashRefunds,
 
                 -- Expenses taken out of the till. Rows with payment_source NULL predate the
@@ -58,6 +67,12 @@ public sealed class DayClosingRepository : IDayClosingRepository
                     SELECT SUM(amount) FROM expenses
                     WHERE expense_date_utc >= @startUtc AND expense_date_utc < @endUtc
                       AND payment_source = 'Till'
+                ), 0)
+                -- Commission handed to the salesman in cash left the same drawer.
+              + COALESCE((
+                    SELECT SUM(amount) FROM commission_payouts
+                    WHERE paid_at_utc >= @startUtc AND paid_at_utc < @endUtc
+                      AND payment_method = 'Cash'
                 ), 0) AS CashPaidOut,
 
                 -- The other way notes leave the till, and the one that moves the largest
@@ -66,7 +81,15 @@ public sealed class DayClosingRepository : IDayClosingRepository
                     SELECT SUM(amount) FROM supplier_payments
                     WHERE payment_date_utc >= @startUtc AND payment_date_utc < @endUtc
                       AND payment_method = 'Cash'
-                ), 0) AS CashToSuppliers;
+                ), 0) AS CashToSuppliers,
+
+                -- Cash a salesman handed over today, counted into the drawer. A handover paid into
+                -- a shop account never touched the drawer.
+                COALESCE((
+                    SELECT SUM(amount) FROM salesman_handovers
+                    WHERE received_at_utc >= @startUtc AND received_at_utc < @endUtc
+                      AND payment_method = 'Cash'
+                ), 0) AS CashFromSalesmen;
             """,
             new { startUtc = range.StartUtc, endUtc = range.EndUtc });
     }
@@ -90,13 +113,13 @@ public sealed class DayClosingRepository : IDayClosingRepository
         await connection.ExecuteAsync(
             """
             INSERT INTO day_closings
-                (closing_date, opening_float, cash_sales, cash_recovery, cash_refunds,
-                 cash_paid_out, cash_to_suppliers, expected_cash, counted_cash, difference, note,
-                 closed_by_user_id, closed_at_utc)
+                (closing_date, opening_float, cash_sales, cash_recovery, cash_from_salesmen,
+                 cash_refunds, cash_paid_out, cash_to_suppliers, expected_cash, counted_cash,
+                 difference, note, closed_by_user_id, closed_at_utc)
             VALUES
-                (@closingDate, @openingFloat, @cashSales, @cashRecovery, @cashRefunds,
-                 @cashPaidOut, @cashToSuppliers, @expectedCash, @countedCash, @difference, @note,
-                 @userId, @nowUtc);
+                (@closingDate, @openingFloat, @cashSales, @cashRecovery, @cashFromSalesmen,
+                 @cashRefunds, @cashPaidOut, @cashToSuppliers, @expectedCash, @countedCash,
+                 @difference, @note, @userId, @nowUtc);
             """,
             new
             {
@@ -104,6 +127,7 @@ public sealed class DayClosingRepository : IDayClosingRepository
                 openingFloat,
                 cashSales = movement.CashSales,
                 cashRecovery = movement.CashRecovery,
+                cashFromSalesmen = movement.CashFromSalesmen,
                 cashRefunds = movement.CashRefunds,
                 cashPaidOut = movement.CashPaidOut,
                 cashToSuppliers = movement.CashToSuppliers,
@@ -124,6 +148,7 @@ public sealed class DayClosingRepository : IDayClosingRepository
         c.cash_refunds   AS CashRefunds,
         c.cash_paid_out  AS CashPaidOut,
         c.cash_to_suppliers AS CashToSuppliers,
+        c.cash_from_salesmen AS CashFromSalesmen,
         c.expected_cash  AS ExpectedCash,
         c.counted_cash   AS CountedCash,
         c.difference     AS Difference,

@@ -14,6 +14,9 @@ public sealed record CustomerBalanceSnapshot
 }
 
 /// <summary>One line as it will be written, after the server has priced it.</summary>
+/// <param name="BaseUnitPrice">The owner's price at the moment of sale — set only on a field
+/// salesman's lines, where commission is measured against it.</param>
+/// <param name="CommissionRate">The salesman's rate, in percent, at the moment of sale.</param>
 public sealed record InvoiceItemToWrite(
     long ProductId,
     string ProductName,
@@ -21,7 +24,9 @@ public sealed record InvoiceItemToWrite(
     decimal UnitSalePrice,
     decimal LineDiscount,
     decimal UnitCostPrice,
-    decimal LineTotal);
+    decimal LineTotal,
+    decimal? BaseUnitPrice = null,
+    decimal? CommissionRate = null);
 
 /// <summary>
 /// The write side of selling. Every method takes the caller's transaction so the invoice, the
@@ -58,6 +63,7 @@ public interface IInvoiceWriteRepository
         string? idempotencyKey,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default);
 
     Task InsertInvoiceItemsAsync(
@@ -139,6 +145,9 @@ public sealed record InvoiceListRow
     public decimal NetAmount { get; init; }
 
     public PaymentMethod PaymentMethod { get; init; }
+
+    /// <summary>Whether a payment proof is attached. The image is fetched by id.</summary>
+    public bool HasProof { get; init; }
 }
 
 public interface IInvoiceReadRepository

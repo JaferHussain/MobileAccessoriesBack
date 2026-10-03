@@ -14,6 +14,7 @@ public sealed class CustomerRepository : ICustomerRepository
         mobile_number       AS MobileNumber,
         address             AS Address,
         sale_type           AS SaleType,
+        credit_allowed      AS CreditAllowed,
         outstanding_balance AS OutstandingBalance,
         is_active           AS IsActive
         """;
@@ -88,8 +89,8 @@ public sealed class CustomerRepository : ICustomerRepository
 
         return await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, mobile_number, address, sale_type, outstanding_balance, is_active, created_at_utc)
-            VALUES (@Name, @MobileNumber, @Address, @saleType, 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (name, mobile_number, address, sale_type, credit_allowed, outstanding_balance, is_active, created_at_utc)
+            VALUES (@Name, @MobileNumber, @Address, @saleType, @CreditAllowed, 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new
@@ -103,6 +104,7 @@ public sealed class CustomerRepository : ICustomerRepository
                 // every other enum column in this schema (see payment_method, sale_type on
                 // invoices), so it is spelled out explicitly here, the same way.
                 saleType = customer.SaleType.ToString(),
+                customer.CreditAllowed,
             });
     }
 
@@ -119,6 +121,7 @@ public sealed class CustomerRepository : ICustomerRepository
                 mobile_number = @MobileNumber,
                 address = @Address,
                 sale_type = @saleType,
+                credit_allowed = @CreditAllowed,
                 updated_at_utc = UTC_TIMESTAMP(6)
             WHERE id = @Id;
             """,
@@ -129,6 +132,7 @@ public sealed class CustomerRepository : ICustomerRepository
                 customer.MobileNumber,
                 customer.Address,
                 saleType = customer.SaleType.ToString(),
+                customer.CreditAllowed,
             });
     }
 }
@@ -247,7 +251,8 @@ public sealed class InvoiceReadRepository : IInvoiceReadRepository
                     i.amount_paid      AS AmountPaid,
                     i.amount_remaining AS AmountRemaining,
                     i.net_amount       AS NetAmount,
-                    i.payment_method   AS PaymentMethod
+                    i.payment_method   AS PaymentMethod,
+                    (i.payment_proof_path IS NOT NULL) AS HasProof
              FROM invoices i
              LEFT JOIN customers c ON c.id = i.customer_id
              {filter}

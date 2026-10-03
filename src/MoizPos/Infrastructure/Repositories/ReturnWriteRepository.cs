@@ -1,6 +1,7 @@
 using System.Globalization;
 using Dapper;
 using MoizPos.Application.Abstractions;
+using MoizPos.Domain.Enums;
 
 namespace MoizPos.Infrastructure.Repositories;
 
@@ -73,24 +74,29 @@ public sealed class ReturnWriteRepository : IReturnWriteRepository
         DateTime returnDateUtc,
         decimal totalAmount,
         decimal refundDue,
+        PaymentMethod? refundMethod,
         string? reason,
         long userId,
         DateTime nowUtc,
+        bool inField,
         CancellationToken cancellationToken = default)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO sale_returns
-                (invoice_id, return_number, return_date_utc, total_amount, refund_due, reason,
-                 user_id, created_at_utc)
+                (invoice_id, return_number, return_date_utc, total_amount, refund_due, refund_method,
+                 reason, user_id, created_at_utc, in_field)
             VALUES
-                (@invoiceId, @returnNumber, @returnDateUtc, @totalAmount, @refundDue, @reason,
-                 @userId, @nowUtc);
+                (@invoiceId, @returnNumber, @returnDateUtc, @totalAmount, @refundDue, @refundMethod,
+                 @reason, @userId, @nowUtc, @inField);
             SELECT LAST_INSERT_ID();
             """,
             new
             {
-                invoiceId, returnNumber, returnDateUtc, totalAmount, refundDue, reason, userId, nowUtc,
+                invoiceId, returnNumber, returnDateUtc, totalAmount, refundDue,
+                // Spelled out as a string: Dapper would otherwise write the enum's int (see Traps).
+                refundMethod = refundMethod?.ToString(),
+                reason, userId, nowUtc, inField,
             },
             unitOfWork.Transaction);
     }

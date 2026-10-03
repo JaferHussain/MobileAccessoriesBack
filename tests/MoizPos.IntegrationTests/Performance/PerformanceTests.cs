@@ -112,7 +112,8 @@ public sealed class PerformanceTests
         var products = new ProductService(
             new ProductRepository(Factory()),
             new CategoryRepository(Factory()),
-            new BrandRepository(Factory()));
+            new BrandRepository(Factory()),
+            new SalesmanStockRepository(Factory()));
 
         var elapsed = await MeasureAsync(async () =>
             await products.SearchAsync(
@@ -131,7 +132,8 @@ public sealed class PerformanceTests
         var products = new ProductService(
             new ProductRepository(Factory()),
             new CategoryRepository(Factory()),
-            new BrandRepository(Factory()));
+            new BrandRepository(Factory()),
+            new SalesmanStockRepository(Factory()));
 
         // SC-025. The heaviest ordinary shape: three words, each normalised against four fields,
         // every row scanned. If this fails, apply the stored-column fallback documented in
@@ -157,7 +159,8 @@ public sealed class PerformanceTests
         var products = new ProductService(
             new ProductRepository(Factory()),
             new CategoryRepository(Factory()),
-            new BrandRepository(Factory()));
+            new BrandRepository(Factory()),
+            new SalesmanStockRepository(Factory()));
 
         var elapsed = await MeasureAsync(async () =>
             await products.FindByBarcodeAsync(barcode!, UserRole.Staff));
@@ -174,7 +177,8 @@ public sealed class PerformanceTests
         var products = new ProductService(
             new ProductRepository(Factory()),
             new CategoryRepository(Factory()),
-            new BrandRepository(Factory()));
+            new BrandRepository(Factory()),
+            new SalesmanStockRepository(Factory()));
 
         var elapsed = await MeasureAsync(async () =>
             await products.SearchAsync(

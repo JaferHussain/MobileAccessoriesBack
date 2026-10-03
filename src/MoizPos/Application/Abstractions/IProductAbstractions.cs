@@ -151,22 +151,6 @@ public interface ISupplierRepository
     Task UpdateAsync(Supplier supplier, CancellationToken cancellationToken = default);
 }
 
-/// <summary>One row of a supplier's purchase/payment history with its running payable.</summary>
-public sealed record SupplierLedgerRow
-{
-    public DateTime EntryDateUtc { get; init; }
-
-    public string EntryType { get; init; } = string.Empty;
-
-    public long ReferenceId { get; init; }
-
-    public string? Description { get; init; }
-
-    public decimal PurchaseAmount { get; init; }
-
-    public decimal PaymentAmount { get; init; }
-}
-
 public interface IPurchaseRepository
 {
     Task<(IReadOnlyList<Purchase> Items, int TotalItems)> SearchAsync(
@@ -179,12 +163,6 @@ public interface IPurchaseRepository
         CancellationToken cancellationToken = default);
 
     Task<Purchase?> FindByIdAsync(long id, CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<SupplierLedgerRow>> LedgerForSupplierAsync(
-        long supplierId,
-        DateTime? fromUtc,
-        DateTime? toUtc,
-        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Writes the audit trail. Always called inside the mutating transaction (FR-041).</summary>

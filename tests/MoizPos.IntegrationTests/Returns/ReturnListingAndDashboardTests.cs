@@ -96,6 +96,7 @@ public sealed class ReturnListingAndDashboardTests
 
         var returnResponse = await admin.PostAsJsonAsync("/api/sale-returns", new
         {
+            refundMethod = "Cash",
             invoiceId,
             reason = "Wrong colour",
             items = new[] { new { invoiceItemId, quantity = 1 } },
@@ -194,6 +195,7 @@ public sealed class ReturnListingAndDashboardTests
 
         await admin.PostAsJsonAsync("/api/sale-returns", new
         {
+            refundMethod = "Cash",
             invoiceId,
             reason = (string?)null,
             items = new[] { new { invoiceItemId, quantity = 1 } },
@@ -327,6 +329,7 @@ public sealed class ReturnListingAndDashboardTests
 
         var returned = await admin.PostAsJsonAsync("/api/sale-returns", new
         {
+            refundMethod = "Cash",
             invoiceId,
             reason = (string?)null,
             items = new[] { new { invoiceItemId, quantity = 1 } },
@@ -400,6 +403,7 @@ public sealed class ReturnListingAndDashboardTests
         // Both units back: 2 × 600 = 1200 at line price, but the invoice is only worth 1150.
         var returned = await admin.PostAsJsonAsync("/api/sale-returns", new
         {
+            refundMethod = "Cash",
             invoiceId,
             reason = (string?)null,
             items = new[] { new { invoiceItemId, quantity = 2 } },

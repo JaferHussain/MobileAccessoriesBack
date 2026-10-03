@@ -89,13 +89,15 @@ public interface IPurchaseWriteRepository
         DateTime nowUtc,
         CancellationToken cancellationToken = default);
 
-    Task InsertSupplierPaymentAsync(
+    /// <returns>The new payment's id — what its proof is attached to.</returns>
+    Task<long> InsertSupplierPaymentAsync(
         IUnitOfWork unitOfWork,
         long supplierId,
         decimal amount,
         PaymentMethod paymentMethod,
         bool isOverpayment,
         string? note,
+        long? shopAccountId,
         long userId,
         DateTime nowUtc,
         CancellationToken cancellationToken = default);

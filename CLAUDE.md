@@ -249,10 +249,40 @@ customer's hand".
 - The search button is labelled **"Search", not "Add"** — it no longer puts anything in the cart.
 - Sale type stays one choice at the top of the sale and still re-prices existing lines.
 
-## Payment proof (non-cash sales)
+## Transaction proofs (every non-cash transaction)
 
-An invoice whose `payment_method` is not `Cash` may carry one screenshot in
-`invoices.payment_proof_path` (migration `0018`, feature 008). Optional, permanently.
+The owner's rule: **every transaction except cash is kept with its proof.** Five kinds carry one
+screenshot each (migration `0018` for sales, `0030` for the rest):
+
+| Kind (`/api/proofs/{kind}/{id}`) | Column | Who may attach and view |
+|---|---|---|
+| `sale` | `invoices.payment_proof_path` | any signed-in user |
+| `customer-payment` (udhaar recovered) | `customer_payments.payment_proof_path` | any signed-in user |
+| `refund` (after a sale return) | `sale_returns.refund_proof_path` | any signed-in user |
+| `supplier-payment` | `supplier_payments.payment_proof_path` | Admin only |
+| `expense` (Bank only) | `expenses.payment_proof_path` | Admin only |
+
+- **One controller for all five** (`ProofsController`): `POST` attaches or replaces, `GET` streams
+  the image. `TransactionProofRules` (pure) decides who and when: cash is refused, a Till expense
+  is refused, a return that refunded nothing is refused.
+- **Optional when the transaction is saved, never blocking it.** `GET /api/proofs/missing`
+  (Admin) — the **Proof missing** screen under Money — lists every transfer-paid transaction still
+  without one, so "every transaction is provable" holds without the counter waiting on a picture.
+- **Viewing needs a signed-in request.** Proofs live outside wwwroot and are never static files;
+  `ImageStorageService.OpenPaymentProof` refuses any path outside the proof directory, including a
+  sibling folder that merely shares its prefix.
+- **Backups carry them** as `-proofs.zip` beside each dump (`BackupOptions.PaymentProofDirectory`,
+  the same `Storage:PaymentProofRoot` uploads write to). Before `0030` they were not backed up at
+  all — a restore would have lost every screenshot.
+- **Deleting an expense deletes its proof file.** A proof whose row is gone is unreachable.
+- **A refund must say how it was paid** (`RecordSaleReturnRequest.RefundMethod`, 422 when money
+  goes back without one). Day close subtracts only `refund_method = 'Cash'`; assuming cash showed
+  every JazzCash refund as the drawer running **over**. `0030` marked every earlier refund Cash,
+  which is how day close had already counted it.
+- **A Bank expense says which way it went** (`expenses.payment_method`) — required by the form,
+  optional on the API (descriptive; day close does not read it), refused for Till.
+
+The original sale-proof notes still hold:
 
 - **A Cash sale is refused one** (422). The money was counted into the drawer; a "proof" there
   would be evidence of nothing and would invite proof on sales that never had a transfer.
@@ -301,7 +331,7 @@ to see what had been returned. Two GET endpoints and two Dashboard fields close 
   any signed-in user, purchase returns Admin-only (that route reveals cost and payables).
 - **Purchase returns scope to a supplier** via `?supplierId=`, because a return always goes back
   to whichever supplier the goods came from — "every return to everyone" is rarely the question
-  being asked. The Returns screen's Supplier tab now has a supplier picker that filters both the
+  being asked. The Purchase return screen has a supplier picker that filters both the
   purchase list and the return history together.
 - **Dashboard gained `totalSaleReturns` / `totalPurchaseReturns`.** These are visibility only —
   the money was already correct: `invoices.net_amount` (Sales) and the purchases total both
@@ -487,7 +517,7 @@ Each of these caused a real bug during the build.
 | A supplier "opening balance" column | `payable_balance` has an asserted invariant (purchases − payments − returns); an opening figure belongs to none of those terms | It needs a ledger entry and correction-by-delta, like customer opening balances — its own feature |
 | Posting FormData through the API client | The client forces `Content-Type: application/json`, so multipart uploads lose their boundary and the server answers 415 | The request interceptor deletes that header when the body is `FormData` |
 | Building a test tag from `Guid…Where(char.IsLetter)` | A GUID's letters are only `a`–`f`, so six characters is a 46k-symbol space, not 300M. Seeds collide and fail a **random** test with a duplicate-key error that looks like a flake in whatever test drew the short straw | Map each hex digit onto its own letter (`HexToLetter` in `ProductSearchTests`) — letters-only, full 16 symbols |
-| "Tidying away" the one-item groups in the rail | **Sell** holds only *New sale*, and for a Staff user **Inventory** holds only *Products* — both look like mistakes and are not. The catalogue (Products, Categories, Brands) is its own **Inventory** group; **Purchasing** keeps only Purchases and Suppliers, so it stays Admin-only and does not render for a salesman at all | `leaves the counter alone in the Sell group`, `keeps the catalogue together under Inventory` and `shows a salesman Products under Inventory, and nothing else there` record all three on purpose |
+| "Tidying" the rail groups | **Sell** holds *New sale* and *Sale return*; **Purchasing** holds Purchases, Suppliers, *Supplier ledger* and *Purchase return* — the owner split the old Returns screen so each return sits with the trade it reverses. For a Staff user **Inventory** holds only *Products*, which looks like a mistake and is not. Purchasing is all Admin-only, so it does not render for a salesman | `keeps selling and taking back together under Sell`, `puts purchase returns under Purchasing…`, `keeps the catalogue together under Inventory` and `shows a salesman Products under Inventory, and nothing else there`. `/returns` redirects to `/sale-returns` for old bookmarks |
 | Letting minimal hosting insert `UseRouting()` for you | It goes at the **start** of the pipeline, so `MapFallbackToFile("{*path}")` selects an endpoint before the static-file middlewares run — and `StaticFileMiddleware` skips a request that already has one. **Every** static file then answers `200 text/html` with index.html: product pictures, the app's own JS and CSS, the favicon. The page loads and does nothing | `app.UseRouting()` is called explicitly **after** both `UseStaticFiles` calls. `BundledAppStaticFileTests` fails if it moves; the guard is verified by removing the line |
 | Assuming the suite covers the deployed pipeline | The test host's content root is an empty temp directory, so it has no `wwwroot` — `counterAppIsBundled` is false and neither the SPA fallback nor wwwroot static files are ever registered. The shape the shop actually runs in went untested for as long as it existed | `BundledAppStaticFileTests` builds its own host WITH a wwwroot. Anything about serving the bundled app belongs there |
 | Adding a route without a rail icon | Icons live in `index.css` keyed on `href`, not in markup (adding an element would change each link's text, which the nav tests read). A new module ships looking unfinished beside the rest — it happened twice | `AppShell.test.tsx` now reads the stylesheet and fails naming any link with no `::before` rule. The guard is verified: removing one reddens it |
@@ -633,6 +663,180 @@ itself, so a cash sale recorded perfectly and pocketed leaves no trace in any re
 - **A difference is shown, never accused.** The `note` column is where "Rs 300 to the delivery
   boy, not entered" goes; whether those notes stop appearing is how the owner learns the recording
   discipline has taken hold.
+
+## A supplier's account
+
+`GET /api/suppliers/{id}/ledger?from=&to=` — every purchase, purchase return and payment in date
+order with what was owed after each. Admin only. The **Supplier ledger** screen sits under
+Purchasing and opens from each supplier's **Ledger** button.
+
+- **Derived, never stored.** `SupplierLedgerRepository` reads the same three tables and columns
+  the payable invariant sums (`purchases.total − purchase_returns.total − supplier_payments.amount`),
+  and `SupplierLedger.Build` (pure) runs the balance — so the last line **is** `payable_balance`
+  and there is no second table to drift. An older `LedgerForSupplierAsync` that left out returns
+  was removed: its balance disagreed with "You owe" the moment anything went back.
+- **A range only chooses which lines to show.** The balance is run over the whole history first;
+  the period opens on `openingBalance`, what was owed before `from`. The three totals are
+  all-time, so purchased − returned − paid always equals what is owed.
+- **A supplier payment must say how it was made** (`SupplierPaymentRequest.PaymentMethod`, no
+  default, 400 if missing). It used to default to Cash, and day close subtracts only Cash
+  supplier payments from the drawer — so every bank transfer to a supplier showed as a **short**.
+  Credit and Partial are refused: they describe an unpaid sale, not money handed over. The Pay
+  box starts unanswered for the same reason the expense form does.
+- `note` on a supplier payment is the reference — cheque or transaction number — and shows on the
+  ledger line.
+
+## Shop accounts, and how an expense was paid
+
+`shop_accounts` (migration `0031`) — the shop's own bank and wallet accounts, registered once by
+the owner under Settings → **Shop accounts** (`/api/shop-accounts`, Admin only). A non-cash
+expense or supplier payment names the account it left (`shop_account_id`, optional).
+
+- **An account carries only its own methods** (`ShopAccountRules`, pure): Bank ← bank transfer
+  and Raast; JazzCash ← JazzCash; EasyPaisa ← EasyPaisa. Cash, Credit and Partial go through no
+  account. `ShopAccountCheck` (Api) refuses a mismatched or retired account with 422, and is the one
+  place expenses and supplier payments check it.
+- **Nothing is hard-deleted** — neither accounts nor expense categories. Hiding sets
+  `is_active = FALSE`: no longer offered, still named on every past record. Names are unique;
+  a duplicate is a 422 in words, not a database error.
+- **An expense asks one question: Paid by** — `Cash (from the till)`, bank transfer, JazzCash,
+  EasyPaisa, Raast. `CreateExpenseRequest.ResolvedSource` derives what day close reads: Cash →
+  `Till`, anything else → `Bank`. `payment_method` stores only the transfer method (the column
+  holds no Cash). The older `paymentSource` is still accepted; given both, they must agree.
+  A cash expense is refused an account and a transaction ID.
+- **Its proof is uploaded with the expense** (the page saves, then attaches) — the owner usually
+  has the screenshot in hand, unlike the counter. A failed upload never reads as a failed expense:
+  it says so, and the expense appears on Proof missing.
+- **Expense categories are the owner's** (`/api/expense-categories`: add, `PUT` rename, `DELETE`
+  hides, `/reactivate`). The expense form is offered active ones only; `includeInactive=true` is
+  for the Manage categories panel.
+
+## The team: jobs, sign-ins and the owner's view
+
+One owner (Admin) and staff who do different **jobs** (`users.job`, migration `0032`): `Counter`
+(the shopkeeper, beside the owner) or `FieldSales` (the salesman in the market). **Both keep the
+Staff role** — every "no cost or profit for Staff" protection is unchanged; the job only says which
+work, so later features (commission, carried stock) can tell them apart. A new job is a new ENUM
+member, not a new role. The owner has no job (a create with one is a 400); staff created without
+one work the counter.
+
+- **Sign-ins are recorded** (`user_logins`) by `AuthController.Login` — time, address, device.
+  Never a token refresh, or one working day would read as hundreds.
+- **`/api/team`** (Admin only): a card per active person for the chosen days (today by default) —
+  sales net of returns, bills, received at sale, udhaar given, discounts, returns, udhaar
+  collected, last sign-in. **`/api/team/{userId}/activity`**: their sales, returns, recoveries,
+  supplier payments, expenses, purchases and sign-ins, newest first. Built entirely from the
+  `user_id` every table already records — nothing is recorded twice.
+- **`/api/team/watchlist`**: big discounts (≥ 10% of the listed value — `WatchRules`, pure),
+  transfer sales without proof, a same-day return of one's own sale, refunds by transfer. **A flag
+  to look at, never an accusation.** "Same day" uses a fixed +05:00 (Karachi has no DST), so it
+  needs no time-zone tables on MariaDB.
+- **The counter drawer is shared** by the owner and the shopkeeper, so a day-close difference
+  belongs to the counter, not to one person. The salesman's market cash is kept out of it until
+  handed over (below).
+
+## The field salesman's commission
+
+The owner's rule: **a field salesman keeps half of whatever he sells above the owner's price,
+earned once the customer has paid for it — and he may never sell below that price.**
+
+- **The owner's price is the price the counter already quotes** (`Commission.BasePrice`): retail,
+  or for a wholesale sale the wholesale price, falling back to retail. No second price list.
+- **Snapshotted on each of his lines** (`invoice_items.base_unit_price`, `commission_rate`,
+  migration `0033`), exactly like `unit_cost_price`: a price or rate changed tomorrow never
+  rewrites what last week earned. NULL on every other line — only `StaffJob.FieldSales` earns.
+- **The floor** sits in `InvoiceService`, before the first write, on what each unit REALLY fetched
+  (`ReturnPricing.EffectiveUnitPrice` — after its line discount and its share of the whole-bill
+  discount), against the price read from the LOCKED row. The seller's job comes from his account,
+  never the request (`InvoicesController` reads it and passes `sellerJob`).
+- **Earned is derived, never stored** (`CommissionService`, `Commission.Settle`, pure): a
+  customer's payments settle their oldest debt first — amounts brought forward, then sales, whoever
+  sold them — so a sale is earned the day the udhaar on it is fully recovered, in proportion when
+  part-recovered. A returned unit earns nothing.
+- **Payouts are stored** (`commission_payouts`); owed = earned − paid out, and a payout above what
+  is owed is a 422 — commission on unrecovered udhaar is not his yet. A **cash** payout joins
+  `CashPaidOut` at day close; every payout counts in `ExpenseRepository.SumForPeriodAsync` (net
+  profit) and appears as "Salesman commission" in the expense breakdown, so the two agree.
+- `/api/commissions/{userId}` and payouts are Admin only; `/api/commissions/me` gives a salesman
+  his own — sale prices and the owner's price, never cost.
+- A salesman may now sell on udhaar to the owner's udhaar customers (below); the commission
+  already handled udhaar, so nothing here changed.
+
+## The salesman in the market: udhaar customers and the cash he carries
+
+**Udhaar customers** (`customers.credit_allowed`, migration `0034`). The owner marks which customers
+the field salesman may leave money owing with. `UdhaarAuthority.MayLeaveOwing` (pure): the owner
+always; a `FieldSales` seller only for a marked customer; the counter shopkeeper never.
+
+- **Still decided in `InvoiceService`, on the recomputed `AmountRemaining`, before the first
+  write** — the credit-authority rule is widened, not moved. A walk-in or an unmarked customer is
+  refused with words that say why.
+- **Owner-only to set**, like `SaleType`: `CustomerUpsertRequest.CreditAllowed` is applied only for
+  an Admin and silently ignored otherwise; a Staff quick-create is always unmarked. A salesman must
+  never be able to grant himself a customer to give credit to.
+- `0034` backfilled the mark onto every customer who already had udhaar history (a balance, an
+  opening balance, or an invoice with money remaining) — the owner's "already categorised" ones.
+
+**His cash** (`in_field` on `invoices`, `customer_payments`, `sale_returns`; `salesman_handovers`).
+
+- **`in_field` is snapshotted** from the seller's job when the row is written, exactly like
+  `base_unit_price` — a salesman later moved to the counter never re-labels last month's cash.
+- **Day close excludes `in_field` rows** from cash sales, recovery and refunds: that money is in his
+  pocket, not the drawer, and counting it would show a false short every evening.
+- **It joins the drawer only when handed over**: `POST /api/salesman-cash/{userId}/handovers`
+  (Admin — "Received from salesman", never recorded by the salesman). A **cash** handover is
+  `CashFromSalesmen` at day close (snapshotted on `day_closings.cash_from_salesmen`); a transfer
+  went into a shop account and never touches the drawer. Credit/Partial are refused.
+- **In hand is derived, never stored or typed** (`SalesmanCashService`): cash taken at his sales
+  (Cash/Partial `amount_paid`) + cash udhaar recovered − cash refunds − handovers. Built from the
+  same `in_field` rows day close leaves out, so the two can never disagree. A handover above what
+  he holds is a 422.
+- `GET /api/salesman-cash/me` gives a salesman his own; `/{userId}` is Admin. The Team card shows
+  `cashInHand` (all-time) for a field salesman.
+
+**His own screen** — `GET /api/my-day?from=&to=` (any signed-in user; today when left out): the
+same card the owner sees on Team, plus his sales, returns and recoveries (`TeamService.MineAsync`).
+**It takes no user id** — always the caller's own, so nobody can read another's through it. Sign-ins,
+purchases, supplier payments and expenses are filtered out: they are the owner's business, and a
+purchase line's amount is cost. With `/api/commissions/me` and `/api/salesman-cash/me` it is
+everything the phone's **My day** screen shows.
+
+## Stock the salesman carries
+
+`salesman_stock` (what each salesman holds, per product) and `salesman_stock_movements` (every unit
+in and out of his bag), migration `0035`. The owner **issues** goods and **takes them back**
+(`POST /api/salesman-stock/{userId}/issue` and `/return`, Admin); a salesman reads his own
+(`/me`). The Team card shows `stockUnits`.
+
+- **`quantity_on_hand` stays what the shop OWNS.** Goods in his bag are still the shop's, so stock
+  value, purchases and every report are untouched. Issuing and taking back never change it — they
+  only move owned units between the shelf and his bag.
+- **What the counter can sell is the shelf:** `SalesmanStockRules.AtShop` = owned − everything
+  salesmen carry. A counter sale beyond that is `INSUFFICIENT_STOCK`, naming how many are with the
+  salesman.
+- **A field salesman sells out of his own bag, and only from it.** `InvoiceService` checks his
+  holding instead of the shelf; a sale takes the units out of both (`quantity_on_hand` and his
+  holding, movement `Sold`). He cannot sell what he was never issued — the owner issues it first.
+- **A customer handing goods back to him** (an `in_field` sale return) puts them back into both
+  (movement `CustomerReturn`). Returned at the counter, they go onto the shelf as before.
+- **Owned can never fall below what salesmen carry**: a stock correction (`StockService.AdjustAsync`)
+  or purchase return that would is refused (422) — it would describe goods that do not exist.
+- **Locking:** every change to `salesman_stock` happens under the product rows' `FOR UPDATE` lock
+  (ordered by id) that every sale, purchase and return already takes, and every read of it inside a
+  write is itself `FOR UPDATE`. A plain read would see the transaction's snapshot, which can predate
+  an issue committed while this one waited for the product lock.
+- The holding is stored, like `quantity_on_hand`, with its movements beside it; the movements
+  always add up to it (`Every_unit_in_and_out_of_his_bag_is_on_the_record`).
+- **Tests that sell as a field salesman must issue first** — `ApiFactory.IssueToSalesmanAsync`
+  goes through the real service. `FieldSalesTests` and `CommissionTests` do it inside `SellAsync`.
+- **Every product read carries where the stock is**: `atShop` (the shelf), `withSalesmen`, and
+  `inYourBag` — the caller's own holding, only when the caller is a field salesman (null
+  otherwise; read from his account by `ProductsController`, never the request). `quantityOnHand`
+  keeps meaning OWNED, and `isLowStock` is still judged on it: goods out with a salesman will be
+  sold, and judging on the shelf would cry "low stock" every morning after the round is issued.
+  Worked out in `ProductService.ProjectAllAsync` with one extra display query per page — kept out
+  of the search SQL so the five-thousand-product bound is unaffected. These are quantities, not
+  cost, so they sit on the Staff shape.
 
 ## Who sold what
 

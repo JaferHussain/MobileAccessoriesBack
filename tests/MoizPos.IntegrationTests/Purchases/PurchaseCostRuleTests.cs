@@ -355,7 +355,7 @@ public sealed class PurchaseCostRuleTests
             new RecordSupplierPaymentRequest { SupplierId = supplierId, Amount = 3_000m },
             userId);
 
-        newPayable.Should().Be(5_000m);
+        newPayable.NewPayable.Should().Be(5_000m);
         (await ReadPayableAsync(supplierId)).Should().Be(5_000m);
     }
 
@@ -399,7 +399,7 @@ public sealed class PurchaseCostRuleTests
             { SupplierId = supplierId, Amount = 1_500m, ConfirmOverpayment = true },
             userId);
 
-        newPayable.Should().Be(-500m);
+        newPayable.NewPayable.Should().Be(-500m);
 
         await using var connection = await _api.OpenDatabaseAsync();
 

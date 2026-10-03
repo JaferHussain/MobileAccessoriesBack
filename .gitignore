@@ -37,9 +37,9 @@ secrets.json
 # ---------- Runtime data (never commit shop data) ----------
 backups/
 uploads/
-content/products/
+**/content/products/
 # Customers' payment screenshots — evidence, never source. The repository is public.
-content/payment-proofs/
+**/content/payment-proofs/
 *.sql.gz
 *.dump
 

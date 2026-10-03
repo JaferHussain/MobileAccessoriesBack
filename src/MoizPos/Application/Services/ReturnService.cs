@@ -21,6 +21,17 @@ public sealed record RecordSaleReturnRequest
     public string? Reason { get; init; }
 
     public IReadOnlyList<SaleReturnLine> Items { get; init; } = [];
+
+    /// <summary>
+    /// How the refund was handed back. Required whenever the return refunds money, ignored (and
+    /// stored as NULL) when it only reduces what the customer owes. There is no default: day close
+    /// subtracts Cash refunds from the drawer, and assuming Cash made every JazzCash refund show
+    /// the drawer OVER by that amount.
+    /// </summary>
+    public PaymentMethod? RefundMethod { get; init; }
+
+    /// <summary>Taken back in the market by a field salesman: a cash refund came out of his pocket, not the drawer.</summary>
+    public bool InField { get; init; }
 }
 
 /// <summary>One product's stock effect from a return — what the confirmation popup names.</summary>
@@ -87,6 +98,7 @@ public sealed class ReturnService : IReturnService
     private readonly IPurchaseWriteRepository _purchases;
     private readonly IStockWriteRepository _stock;
     private readonly IStockMovementWriter _stockMovements;
+    private readonly ISalesmanStockRepository _salesmanStock;
     private readonly IAuditWriter _audit;
     private readonly IClock _clock;
 
@@ -97,6 +109,7 @@ public sealed class ReturnService : IReturnService
         IPurchaseWriteRepository purchases,
         IStockWriteRepository stock,
         IStockMovementWriter stockMovements,
+        ISalesmanStockRepository salesmanStock,
         IAuditWriter audit,
         IClock clock)
     {
@@ -106,6 +119,7 @@ public sealed class ReturnService : IReturnService
         _purchases = purchases;
         _stock = stock;
         _stockMovements = stockMovements;
+        _salesmanStock = salesmanStock;
         _audit = audit;
         _clock = clock;
     }
@@ -192,11 +206,15 @@ public sealed class ReturnService : IReturnService
         var reducesBalance = Math.Min(totalReturned, invoice.AmountRemaining);
         var refundDue = Round(totalReturned - reducesBalance);
 
+        // Checked before the first write, so a refusal leaves no return, no stock movement and no
+        // balance change behind — the same discipline as every other refusal in this service.
+        var refundMethod = RefundMethodFor(refundDue, request.RefundMethod);
+
         var returnNumber = await _returns.NextReturnNumberAsync(uow, "SRT", nowUtc.Year, cancellationToken);
 
         var returnId = await _returns.InsertSaleReturnAsync(
-            uow, request.InvoiceId, returnNumber, nowUtc, totalReturned, refundDue,
-            request.Reason, userId, nowUtc, cancellationToken);
+            uow, request.InvoiceId, returnNumber, nowUtc, totalReturned, refundDue, refundMethod,
+            request.Reason, userId, nowUtc, request.InField, cancellationToken);
 
         await _returns.InsertSaleReturnItemsAsync(uow, returnId, toWrite, cancellationToken);
 
@@ -216,6 +234,18 @@ public sealed class ReturnService : IReturnService
             await _stockMovements.AppendAsync(
                 uow, item.ProductId, item.Quantity, newQuantity, StockMovementReason.SaleReturn,
                 returnId, userId, request.Reason, nowUtc, cancellationToken);
+
+            // Handed back to the salesman in the market: it goes back into his bag, not onto the
+            // shelf. Under the product lock just taken, like every change to what he carries.
+            if (request.InField)
+            {
+                var carrying = (await _salesmanStock.HoldingAsync(uow, userId, [item.ProductId], cancellationToken))
+                    .GetValueOrDefault(item.ProductId);
+
+                await _salesmanStock.MoveAsync(
+                    uow, userId, item.ProductId, item.Quantity, carrying + item.Quantity,
+                    SalesmanStockReason.CustomerReturn, returnId, request.Reason, userId, nowUtc, cancellationToken);
+            }
 
             await AuditAsync(uow, "Product", item.ProductId, "quantity_on_hand",
                 product.QuantityOnHand, newQuantity, "SaleReturn", userId, nowUtc, cancellationToken);
@@ -281,6 +311,18 @@ public sealed class ReturnService : IReturnService
         var supplier = await _purchases.LockSupplierAsync(uow, purchase.SupplierId, cancellationToken)
             ?? throw new NotFoundException("Supplier", purchase.SupplierId);
 
+        // Goods in a salesman's bag cannot go back to the supplier: they are not on the shelf.
+        var heldBySalesmen = (await _salesmanStock.HeldBySalesmenAsync(uow, [product.Id], cancellationToken))
+            .GetValueOrDefault(product.Id);
+
+        // Only when he carries some: otherwise the ordinary "not enough stock" below says it better.
+        if (heldBySalesmen > 0 && !SalesmanStockRules.CanReduceOwned(product.QuantityOnHand, heldBySalesmen, request.Quantity))
+        {
+            throw new BusinessRuleViolationException(
+                $"Only {SalesmanStockRules.AtShop(product.QuantityOnHand, heldBySalesmen)} of '{product.Name}' are in the " +
+                $"shop — {heldBySalesmen} are with the salesman. Take them back from him first.");
+        }
+
         // Guarded: goods already sold cannot be sent back to the supplier (FR-025).
         var newQuantity = StockRules.NextQuantity(
             product.QuantityOnHand, -request.Quantity, product.Name);
@@ -319,6 +361,33 @@ public sealed class ReturnService : IReturnService
 
         return new RecordPurchaseReturnResult(
             returnId, returnNumber, product.Name, total, newQuantity, newPayable);
+    }
+
+    /// <summary>
+    /// How a refund was paid, or null when nothing was refunded. A refund must say how it went —
+    /// in cash, or by one of the ways a transfer can go; Credit and Partial describe an unpaid
+    /// sale, never money handed back.
+    /// </summary>
+    private static PaymentMethod? RefundMethodFor(decimal refundDue, PaymentMethod? requested)
+    {
+        if (refundDue <= 0m)
+        {
+            return null;
+        }
+
+        if (requested is null)
+        {
+            throw new BusinessRuleViolationException(
+                $"This return refunds Rs {refundDue:N2}. Say how it was handed back — cash, bank transfer, JazzCash…");
+        }
+
+        if (requested is PaymentMethod.Credit or PaymentMethod.Partial)
+        {
+            throw new BusinessRuleViolationException(
+                "A refund is paid in cash or by transfer. Credit and Partial describe an unpaid sale.");
+        }
+
+        return requested;
     }
 
     private static decimal Round(decimal value) =>

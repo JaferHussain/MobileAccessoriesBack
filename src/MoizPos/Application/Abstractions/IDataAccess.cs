@@ -8,8 +8,30 @@ namespace MoizPos.Application.Abstractions;
 /// </summary>
 public interface IDbConnectionFactory
 {
-    /// <summary>Opens a new connection. The caller owns it and must dispose it.</summary>
+    /// <summary>
+    /// Opens a new connection. The caller owns it and must dispose it. Throws
+    /// <see cref="DatabaseUnavailableException"/> when the server cannot be reached.
+    /// </summary>
     Task<DbConnection> OpenAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// The database server could not be reached, even after retrying. Answered as 503 with a message
+/// the shopkeeper can act on — "check the internet connection" — rather than "unexpected error",
+/// which sent the owner looking for a bug in supplier returns that did not exist.
+///
+/// <para>It comes from OPENING a connection, and a write opens its connection before doing
+/// anything — so a sale or return refused this way wrote nothing. The message does not promise
+/// that, though: it cannot know every caller.</para>
+/// </summary>
+public sealed class DatabaseUnavailableException : Exception
+{
+    public DatabaseUnavailableException(Exception innerException)
+        : base(
+            "Could not reach the database. Check the internet connection, then try again.",
+            innerException)
+    {
+    }
 }
 
 /// <summary>

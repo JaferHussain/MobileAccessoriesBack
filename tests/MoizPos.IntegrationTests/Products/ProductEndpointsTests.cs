@@ -229,8 +229,19 @@ public sealed class ProductEndpointsTests
         // Absent, not null. FR-040 and quickstart V7.
         raw.Should().NotContain("costPrice");
         raw.Should().NotContain("wholesalePrice");
-        raw.Should().NotContain("800");
+
+        // The cost itself, as a VALUE. Searching the raw text for "800" failed at random once
+        // an id or a GUID in the product name happened to contain those three digits.
+        Numbers(JsonDocument.Parse(raw).RootElement).Should().NotContain(800m);
     }
+
+    private static IEnumerable<decimal> Numbers(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Number => [element.GetDecimal()],
+        JsonValueKind.Object => element.EnumerateObject().SelectMany(property => Numbers(property.Value)),
+        JsonValueKind.Array => element.EnumerateArray().SelectMany(Numbers),
+        _ => [],
+    };
 
     [Fact]
     public async Task Staff_list_response_contains_no_cost_price()
