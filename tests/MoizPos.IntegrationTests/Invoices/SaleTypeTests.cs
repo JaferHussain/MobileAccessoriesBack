@@ -349,6 +349,7 @@ public sealed class SaleTypeTests
 
         var customerId = (await customer.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(customerId);
 
         var sale = await admin.PostAsJsonAsync("/api/invoices", new
         {

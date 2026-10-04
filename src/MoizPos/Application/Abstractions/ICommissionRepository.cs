@@ -79,6 +79,9 @@ public sealed record CommissionPayoutRow
     public DateTime PaidAtUtc { get; init; }
 
     public string RecordedBy { get; init; } = string.Empty;
+
+    /// <summary>A transfer payout has its screenshot attached.</summary>
+    public bool HasProof { get; init; }
 }
 
 public interface ICommissionRepository

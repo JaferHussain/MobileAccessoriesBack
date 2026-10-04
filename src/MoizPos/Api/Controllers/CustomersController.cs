@@ -89,6 +89,9 @@ public sealed class CustomersController : ControllerBase
     private readonly ICustomerRepository _customers;
     private readonly ICustomerLedgerService _ledger;
 
+    private const string NeedsRegistration =
+        "Udhaar is given by registering the customer under Udhaar customers, with their phone number and both sides of their ID card.";
+
     public CustomersController(ICustomerRepository customers, ICustomerLedgerService ledger)
     {
         _customers = customers;
@@ -187,12 +190,13 @@ public sealed class CustomersController : ControllerBase
         [FromQuery] SaleType? saleType = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
+        [FromQuery] bool udhaarOnly = false,
         CancellationToken cancellationToken = default)
     {
         var (normalizedPage, normalizedSize) = PagedResult<Customer>.Normalize(page, pageSize);
 
         var (items, total) = await _customers.SearchAsync(
-            search, withBalanceOnly, saleType, normalizedPage, normalizedSize, cancellationToken);
+            search, withBalanceOnly, saleType, normalizedPage, normalizedSize, cancellationToken, udhaarOnly);
 
         return Ok(ApiResponse<PagedResult<Customer>>.Ok(
             new PagedResult<Customer>(items, normalizedPage, normalizedSize, total)));
@@ -213,6 +217,12 @@ public sealed class CustomersController : ControllerBase
         [FromBody] CustomerUpsertRequest request,
         CancellationToken cancellationToken)
     {
+        // Udhaar is granted only through Udhaar customers, with the ID card — never by a flag here.
+        if (request.CreditAllowed == true)
+        {
+            throw new BusinessRuleViolationException(NeedsRegistration);
+        }
+
         var id = await _customers.CreateAsync(
             new Customer
             {
@@ -229,8 +239,6 @@ public sealed class CustomersController : ControllerBase
                     ? request.SaleType.Value
                     : Domain.Enums.SaleType.Retail,
 
-                // The owner's decision alone; a customer a salesman creates is never an udhaar customer.
-                CreditAllowed = CurrentUser.Role(User) == UserRole.Admin && request.CreditAllowed == true,
             },
             cancellationToken);
 
@@ -259,9 +267,16 @@ public sealed class CustomersController : ControllerBase
             existing.SaleType = request.SaleType.Value;
         }
 
-        if (CurrentUser.Role(User) == UserRole.Admin && request.CreditAllowed is not null)
+        // Taking the mark away is the owner's to do from here; GIVING it needs the ID card, so it
+        // happens only through Udhaar customers.
+        if (request.CreditAllowed == true && !existing.CreditAllowed)
         {
-            existing.CreditAllowed = request.CreditAllowed.Value;
+            throw new BusinessRuleViolationException(NeedsRegistration);
+        }
+
+        if (CurrentUser.Role(User) == UserRole.Admin && request.CreditAllowed == false)
+        {
+            existing.CreditAllowed = false;
         }
 
         // OutstandingBalance is untouched: it moves only through invoice, payment and

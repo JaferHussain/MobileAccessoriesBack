@@ -8,7 +8,9 @@ namespace MoizPos.Application.Services;
 public sealed record SalesmanCashMovement(
     string Kind, long ReferenceId, string? Reference, DateTime EntryDateUtc, decimal Amount, string? Method, string? Detail,
     /// <summary>The effect on his cash in hand: + for money taken, − for money given back or handed over.</summary>
-    decimal Effect);
+    decimal Effect,
+    /// <summary>A handover by transfer has its screenshot attached.</summary>
+    bool HasProof = false);
 
 /// <summary>The cash a field salesman carries: collected − refunded − handed over = in hand.</summary>
 public sealed record SalesmanCashStatement(
@@ -19,7 +21,9 @@ public sealed record SalesmanCashStatement(
     decimal Refunded,
     decimal HandedOver,
     decimal InHand,
-    IReadOnlyList<SalesmanCashMovement> Movements);
+    IReadOnlyList<SalesmanCashMovement> Movements,
+    /// <summary>Set only in answer to a handover just recorded — so its proof can be attached straight after.</summary>
+    long? HandoverId = null);
 
 public interface ISalesmanCashService
 {
@@ -60,7 +64,8 @@ public sealed class SalesmanCashService : ISalesmanCashService
         var movements = (await _cash.MovementsAsync(userId, cancellationToken))
             .Select(row => new SalesmanCashMovement(
                 row.Kind, row.ReferenceId, row.Reference, row.EntryDateUtc, row.Amount, row.Method, row.Detail,
-                row.Kind is "Sale" or "Recovery" ? row.Amount : -row.Amount))
+                row.Kind is "Sale" or "Recovery" ? row.Amount : -row.Amount,
+                row.HasProof))
             .ToList();
 
         var collected = movements.Where(m => m.Kind is "Sale" or "Recovery").Sum(m => m.Amount);
@@ -89,10 +94,10 @@ public sealed class SalesmanCashService : ISalesmanCashService
                 $"{statement.FullName} is holding Rs {statement.InHand:N2}. Record only what he actually handed over.");
         }
 
-        await _cash.InsertHandoverAsync(
+        var handoverId = await _cash.InsertHandoverAsync(
             userId, amount, method, string.IsNullOrWhiteSpace(note) ? null : note.Trim(), receivedByUserId, _clock.UtcNow,
             cancellationToken);
 
-        return await StatementAsync(userId, cancellationToken);
+        return await StatementAsync(userId, cancellationToken) with { HandoverId = handoverId };
     }
 }

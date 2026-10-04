@@ -17,6 +17,18 @@ public enum ProofKind
 
     /// <summary>An expense paid from the bank. <c>expenses.payment_proof_path</c>.</summary>
     Expense,
+
+    /// <summary>Money a field salesman handed over by transfer. <c>salesman_handovers.payment_proof_path</c>.</summary>
+    SalesmanHandover,
+
+    /// <summary>Commission paid to a salesman by transfer. <c>commission_payouts.payment_proof_path</c>.</summary>
+    CommissionPayout,
+
+    /// <summary>
+    /// A photo of a supplier's bill. <c>purchase_bills.bill_image_path</c>. Not a payment — the
+    /// bill itself — so it is never refused for how it was paid, and never on Proof missing.
+    /// </summary>
+    PurchaseBill,
 }
 
 /// <summary>
@@ -35,6 +47,9 @@ public static class TransactionProofRules
         ["supplier-payment"] = ProofKind.SupplierPayment,
         ["refund"] = ProofKind.Refund,
         ["expense"] = ProofKind.Expense,
+        ["salesman-handover"] = ProofKind.SalesmanHandover,
+        ["commission-payout"] = ProofKind.CommissionPayout,
+        ["purchase-bill"] = ProofKind.PurchaseBill,
     };
 
     /// <summary>The kind's name in a URL: <c>/api/proofs/{slug}/{id}</c>.</summary>
@@ -44,11 +59,13 @@ public static class TransactionProofRules
         Slugs.TryGetValue(slug ?? string.Empty, out kind);
 
     /// <summary>
-    /// Supplier payments and expenses are the owner's money and the owner's screens. Sales,
-    /// recoveries and refunds are taken by the salesman, so he attaches their proofs.
+    /// Supplier payments, expenses and salesman handovers are the owner's money and the owner's
+    /// screens — the owner records a handover, never the salesman. Sales, recoveries and refunds
+    /// are taken by the salesman, so he attaches their proofs.
     /// </summary>
     public static bool IsAdminOnly(ProofKind kind) =>
-        kind is ProofKind.SupplierPayment or ProofKind.Expense;
+        kind is ProofKind.SupplierPayment or ProofKind.Expense or ProofKind.SalesmanHandover or ProofKind.CommissionPayout
+            or ProofKind.PurchaseBill;
 
     /// <summary>
     /// Why this transaction cannot take a proof, in words for the shopkeeper — or null when it can.
@@ -76,6 +93,12 @@ public static class TransactionProofRules
 
         ProofKind.Refund when method == "Cash" =>
             "A cash refund needs no proof — it was paid from the drawer.",
+
+        ProofKind.SalesmanHandover when method == "Cash" =>
+            "A cash handover needs no proof — it was counted into the drawer.",
+
+        ProofKind.CommissionPayout when method == "Cash" =>
+            "Commission paid in cash needs no proof — it was paid from the drawer.",
 
         _ => null,
     };

@@ -52,8 +52,8 @@ public sealed class PartialRecoveryTests
 
         var customerId = await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, mobile_number, outstanding_balance, is_active, created_at_utc)
-            VALUES (@name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, mobile_number, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new { name = $"Rec {Guid.NewGuid():N}"[..18] });
@@ -253,8 +253,8 @@ public sealed class PartialRecoveryTests
 
         var customerId = await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, mobile_number, outstanding_balance, is_active, created_at_utc)
-            VALUES (@name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, mobile_number, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new { name = $"Old {Guid.NewGuid():N}"[..18] });

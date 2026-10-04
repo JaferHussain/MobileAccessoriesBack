@@ -24,7 +24,8 @@ public sealed class SalesmanCashRepository : ISalesmanCashRepository
             SELECT * FROM (
                 SELECT 'Sale' AS Kind, i.id AS ReferenceId, CAST(i.invoice_number AS CHAR) AS Reference,
                        i.invoice_date_utc AS EntryDateUtc, i.amount_paid AS Amount,
-                       CAST(i.payment_method AS CHAR) AS Method, CAST(c.name AS CHAR) AS Detail
+                       CAST(i.payment_method AS CHAR) AS Method, CAST(c.name AS CHAR) AS Detail,
+                       FALSE AS HasProof
                 FROM invoices i
                 LEFT JOIN customers c ON c.id = i.customer_id
                 WHERE i.user_id = @userId AND i.in_field = TRUE
@@ -32,14 +33,14 @@ public sealed class SalesmanCashRepository : ISalesmanCashRepository
 
                 UNION ALL
                 SELECT 'Recovery', cp.id, CAST(cp.receipt_number AS CHAR), cp.payment_date_utc, cp.amount,
-                       CAST(cp.payment_method AS CHAR), CAST(c.name AS CHAR)
+                       CAST(cp.payment_method AS CHAR), CAST(c.name AS CHAR), FALSE
                 FROM customer_payments cp
                 JOIN customers c ON c.id = cp.customer_id
                 WHERE cp.user_id = @userId AND cp.in_field = TRUE AND cp.payment_method = 'Cash'
 
                 UNION ALL
                 SELECT 'Refund', r.id, CAST(r.return_number AS CHAR), r.return_date_utc, r.refund_due,
-                       CAST(r.refund_method AS CHAR), CAST(CONCAT('Against ', i.invoice_number) AS CHAR)
+                       CAST(r.refund_method AS CHAR), CAST(CONCAT('Against ', i.invoice_number) AS CHAR), FALSE
                 FROM sale_returns r
                 JOIN invoices i ON i.id = r.invoice_id
                 WHERE r.user_id = @userId AND r.in_field = TRUE AND r.refund_method = 'Cash' AND r.refund_due > 0
@@ -47,7 +48,8 @@ public sealed class SalesmanCashRepository : ISalesmanCashRepository
                 UNION ALL
                 SELECT 'Handover', h.id, CAST(NULL AS CHAR), h.received_at_utc, h.amount,
                        CAST(h.payment_method AS CHAR),
-                       CAST(CONCAT('Received by ', u.full_name, COALESCE(CONCAT(' · ', h.note), '')) AS CHAR)
+                       CAST(CONCAT('Received by ', u.full_name, COALESCE(CONCAT(' · ', h.note), '')) AS CHAR),
+                       (h.payment_proof_path IS NOT NULL)
                 FROM salesman_handovers h
                 JOIN users u ON u.id = h.received_by_user_id
                 WHERE h.user_id = @userId

@@ -107,8 +107,8 @@ public sealed class DayClosingTests
 
         await connection.ExecuteAsync(
             """
-            INSERT INTO customers (name, outstanding_balance, is_active, created_at_utc)
-            VALUES (@customer, 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @customer, 0, TRUE, UTC_TIMESTAMP(6));
 
             INSERT INTO customer_payments
                 (customer_id, receipt_number, amount, payment_method, payment_date_utc,

@@ -203,6 +203,7 @@ public sealed class TeamTests
         // Udhaar the owner sold, recovered by the shopkeeper at the counter.
         var customer = await admin.PostAsJsonAsync("/api/customers", new { name = $"Cust {Guid.NewGuid():N}"[..14] });
         var customerId = (await DataAsync(customer)).GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(customerId);
         await SaleAsync(admin, method: "Credit", customerId: customerId, amountPaid: 0m);
         (await staff.PostAsJsonAsync($"/api/customers/{customerId}/payments", new { amount = 300m, paymentMethod = "Cash" }))
             .StatusCode.Should().Be(HttpStatusCode.Created);

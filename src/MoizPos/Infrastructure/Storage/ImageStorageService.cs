@@ -53,6 +53,17 @@ public interface IImageStorageService
     /// the path points anywhere outside the proof directory. The caller disposes the stream.
     /// </summary>
     (Stream Content, string ContentType)? OpenPaymentProof(string relativePath);
+
+    /// <summary>
+    /// Saves one side of an udhaar customer's ID card — inside the private proof directory
+    /// (<c>id-cards/</c>), so it is never a static file, is opened only through a signed-in
+    /// owner's request, and is carried by the proofs backup. Open it with <see cref="OpenPaymentProof"/>.
+    /// </summary>
+    Task<string> SaveIdCardAsync(
+        Stream content,
+        string contentType,
+        long lengthBytes,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -188,6 +199,20 @@ public sealed class ImageStorageService : IImageStorageService
 
     public void DeletePaymentProof(string relativePath) =>
         DeleteIfInside(_options.PaymentProofRoot, relativePath);
+
+    public async Task<string> SaveIdCardAsync(
+        Stream content,
+        string contentType,
+        long lengthBytes,
+        CancellationToken cancellationToken = default)
+    {
+        // The same decode check as every other upload: a "photo" that is not an image proves
+        // nobody's identity.
+        var root = $"{_options.PaymentProofRoot}/id-cards";
+        var fileName = await SaveDecodedAsync(root, content, contentType, lengthBytes, cancellationToken);
+
+        return $"{root}/{fileName}".Replace('\\', '/');
+    }
 
     public (Stream Content, string ContentType)? OpenPaymentProof(string relativePath)
     {

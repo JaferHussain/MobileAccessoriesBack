@@ -102,6 +102,7 @@ public sealed class InvoiceListTests
         var created = await admin.PostAsJsonAsync("/api/customers", new { name });
         var customerId = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(customerId);
 
         var invoiceId = await SellAsync(admin, customerId);
 

@@ -30,9 +30,15 @@ public sealed class CustomerRepository : ICustomerRepository
         SaleType? saleType,
         int page,
         int pageSize,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool udhaarOnly = false)
     {
         var filter = "WHERE is_active = TRUE";
+
+        if (udhaarOnly)
+        {
+            filter += " AND credit_allowed = TRUE";
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {

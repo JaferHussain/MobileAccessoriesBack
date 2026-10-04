@@ -75,6 +75,7 @@ public sealed class PaymentMessageTests
 
         var id = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(id);
 
         return (id, name);
     }

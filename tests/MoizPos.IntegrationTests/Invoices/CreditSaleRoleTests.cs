@@ -64,8 +64,8 @@ public sealed class CreditSaleRoleTests
 
         return await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, mobile_number, outstanding_balance, is_active, created_at_utc)
-            VALUES (@name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, mobile_number, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new { name = $"Cust {Guid.NewGuid():N}"[..18] });
@@ -102,32 +102,34 @@ public sealed class CreditSaleRoleTests
     }
 
     [Fact]
-    public async Task A_salesman_cannot_sell_part_paid()
+    public async Task The_shopkeeper_can_take_a_part_payment()
     {
+        // The owner's decision: the counter may take some money now and leave the rest owed —
+        // to an udhaar customer, or a walk-in whose phone is on file (CreditEligibility).
         var staff = await ClientAsync(UserRole.Staff);
         var productId = await CreateProductAsync();
         var customerId = await CreateCustomerAsync();
 
-        // FR-052: Rs 2,000 of the shop's goods still walked out against a debt.
         var response = await staff.PostAsJsonAsync(
             "/api/invoices", Sale(productId, customerId, 5000m, amountPaid: 3000m));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
-    public async Task A_salesman_cannot_dodge_the_rule_by_calling_it_a_cash_sale()
+    public async Task The_shopkeeper_cannot_dodge_the_rule_by_calling_full_udhaar_a_cash_sale()
     {
         var staff = await ClientAsync(UserRole.Staff);
         var productId = await CreateProductAsync();
         var customerId = await CreateCustomerAsync();
 
-        // The label says Cash; the money says otherwise. The server recomputes the total from the
-        // locked product rows, so the label buys nothing.
+        // The label says Cash; the money says the whole bill is owed. The server recomputes the
+        // total from the locked product rows and judges the money it was actually paid, so the
+        // label buys nothing — and nothing paid is full udhaar, the owner's alone.
         var response = await staff.PostAsJsonAsync("/api/invoices", new
         {
             customerId,
-            amountPaid = 1000m,
+            amountPaid = 0m,
             paymentMethod = "Cash",
             items = new[]
             {
@@ -243,7 +245,7 @@ public sealed class CreditSaleRoleTests
     }
 
     [Fact]
-    public async Task A_salesman_leaves_no_credit_invoice_behind_however_hard_they_try()
+    public async Task The_shopkeeper_leaves_no_full_udhaar_invoice_behind_however_hard_they_try()
     {
         // Data-model invariant 5, asserted against the database rather than through the API so it
         // holds regardless of which route a sale arrived by.
@@ -264,11 +266,16 @@ public sealed class CreditSaleRoleTests
         var productId = await CreateProductAsync();
         var customerId = await CreateCustomerAsync();
 
-        // Every shape of credit this salesman could attempt.
-        foreach (var paid in new[] { 0m, 100m, 4999.99m })
+        // Every label a whole-bill udhaar could be dressed in — nothing paid each time.
+        foreach (var method in new[] { "Credit", "Cash", "Partial", "JazzCash" })
         {
-            var attempt = await client.PostAsJsonAsync(
-                "/api/invoices", Sale(productId, customerId, 5000m, paid));
+            var attempt = await client.PostAsJsonAsync("/api/invoices", new
+            {
+                customerId,
+                amountPaid = 0m,
+                paymentMethod = method,
+                items = new[] { new { productId, quantity = 1, unitSalePrice = 5000m, lineDiscount = 0m } },
+            });
 
             attempt.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         }
@@ -278,7 +285,7 @@ public sealed class CreditSaleRoleTests
         var offenders = await connection.ExecuteScalarAsync<int>(
             """
             SELECT COUNT(*) FROM invoices
-            WHERE user_id = @staffId AND amount_remaining > 0;
+            WHERE user_id = @staffId AND amount_paid = 0 AND amount_remaining > 0;
             """,
             new { staffId });
 

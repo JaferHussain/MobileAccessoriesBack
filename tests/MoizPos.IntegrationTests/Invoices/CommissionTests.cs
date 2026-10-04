@@ -225,6 +225,7 @@ public sealed class CommissionTests
 
         var customer = await admin.PostAsJsonAsync("/api/customers", new { name = $"Shop {Guid.NewGuid():N}"[..14] });
         var customerId = (await DataAsync(customer)).GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(customerId);
 
         var sale = await admin.PostAsJsonAsync("/api/invoices", new
         {
@@ -282,6 +283,71 @@ public sealed class CommissionTests
 
         (await admin.PostAsJsonAsync($"/api/commissions/{salesmanId}/payouts", new { amount = 50m, paymentMethod = "Cash" }))
             .StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    // ================================================================
+    //  Proof of commission paid by transfer
+    // ================================================================
+
+    private static MultipartFormDataContent Screenshot() =>
+        new() { { ApiFactory.Photo(), "file", "payout.jpg" } };
+
+    private static async Task<long> PayAsync(HttpClient admin, long salesmanId, string method)
+    {
+        var paid = await admin.PostAsJsonAsync($"/api/commissions/{salesmanId}/payouts", new { amount = 60m, paymentMethod = method });
+        paid.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // The new payout's id, so its screenshot can be attached straight after.
+        return (await DataAsync(paid)).GetProperty("payoutId").GetInt64();
+    }
+
+    [Fact]
+    public async Task Commission_paid_by_transfer_takes_its_screenshot_and_is_on_proof_missing_until_it_has_one()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, await ProductAsync(), 1200m);
+
+        var payoutId = await PayAsync(admin, salesmanId, "JazzCash");
+
+        static bool Listed(JsonElement missing, long id) => missing.EnumerateArray()
+            .Any(row => row.GetProperty("kind").GetString() == "CommissionPayout" && row.GetProperty("referenceId").GetInt64() == id);
+
+        Listed(await DataAsync(await admin.GetAsync("/api/proofs/missing")), payoutId).Should().BeTrue();
+
+        (await admin.PostAsync($"/api/proofs/commission-payout/{payoutId}", Screenshot())).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Listed(await DataAsync(await admin.GetAsync("/api/proofs/missing")), payoutId).Should().BeFalse();
+        (await StatementAsync(admin, salesmanId)).GetProperty("payouts").EnumerateArray()
+            .Single(row => row.GetProperty("id").GetInt64() == payoutId)
+            .GetProperty("hasProof").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Commission_paid_in_cash_needs_no_proof()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, await ProductAsync(), 1200m);
+
+        var payoutId = await PayAsync(admin, salesmanId, "Cash");
+
+        (await admin.PostAsync($"/api/proofs/commission-payout/{payoutId}", Screenshot())).StatusCode
+            .Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Only_the_owner_attaches_or_sees_a_commission_proof()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, await ProductAsync(), 1200m);
+        var payoutId = await PayAsync(admin, salesmanId, "BankTransfer");
+
+        (await salesman.PostAsync($"/api/proofs/commission-payout/{payoutId}", Screenshot())).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
+        (await salesman.GetAsync($"/api/proofs/commission-payout/{payoutId}")).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]

@@ -71,8 +71,11 @@ public sealed class CreditSalesBreakdownTests
             name = $"Cust {Guid.NewGuid():N}"[..18],
         });
 
-        return (await response.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
+        var id = (await response.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(id);
+
+        return id;
     }
 
     private async Task SellAsync(

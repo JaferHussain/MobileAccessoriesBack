@@ -72,6 +72,7 @@ public sealed class ShareLinkChannelTests
 
         var customerId = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(customerId);
 
         return await SaleAsync(admin, customerId);
     }

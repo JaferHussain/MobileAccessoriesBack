@@ -83,8 +83,8 @@ public sealed class SalesByUserTests
         {
             customerId = await connection.ExecuteScalarAsync<long>(
                 """
-                INSERT INTO customers (name, outstanding_balance, is_active, created_at_utc)
-                VALUES (@name, @remaining, TRUE, UTC_TIMESTAMP(6));
+                INSERT INTO customers (credit_allowed, name, outstanding_balance, is_active, created_at_utc)
+                VALUES (TRUE, @name, @remaining, TRUE, UTC_TIMESTAMP(6));
                 SELECT LAST_INSERT_ID();
                 """,
                 new { name = $"Su {Guid.NewGuid():N}"[..18], remaining });

@@ -77,8 +77,8 @@ public sealed class ReturnTests
 
         return await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, outstanding_balance, is_active, created_at_utc)
-            VALUES (@name, 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @name, 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new { name = $"Cust {Guid.NewGuid():N}"[..18] });

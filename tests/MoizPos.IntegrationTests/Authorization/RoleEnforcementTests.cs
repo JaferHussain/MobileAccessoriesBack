@@ -253,6 +253,9 @@ public sealed class RoleEnforcementTests
         var customerId = (await customer.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
 
+        // The owner's credit sale below needs an udhaar customer.
+        await _api.MarkUdhaarAsync(customerId);
+
         // Selling for FULL payment is the salesman's job and must stay that way (FR-053).
         var sale = await staff.PostAsJsonAsync("/api/invoices", new
         {
@@ -295,7 +298,7 @@ public sealed class RoleEnforcementTests
     /// behaviour is visible in the suite rather than silently disappearing from it.
     /// </summary>
     [Fact]
-    public async Task Staff_cannot_create_a_part_paid_sale()
+    public async Task Staff_may_take_a_part_payment_but_never_the_whole_bill_on_udhaar()
     {
         var admin = await ClientAsync(UserRole.Admin);
 
@@ -315,13 +318,14 @@ public sealed class RoleEnforcementTests
 
         var staff = await ClientAsync(UserRole.Staff);
 
+        // A walk-in paying part: the counter takes their phone, so the rest can be collected.
         var customer = await staff.PostAsJsonAsync(
-            "/api/customers", new { name = $"C {Guid.NewGuid():N}"[..16] });
+            "/api/customers", new { name = $"C {Guid.NewGuid():N}"[..16], mobileNumber = "03211234567" });
 
         var customerId = (await customer.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
 
-        var sale = await staff.PostAsJsonAsync("/api/invoices", new
+        var partPaid = await staff.PostAsJsonAsync("/api/invoices", new
         {
             customerId,
             amountPaid = 400m,
@@ -329,7 +333,17 @@ public sealed class RoleEnforcementTests
             items = new[] { new { productId, quantity = 1, unitSalePrice = 1000m } },
         });
 
-        sale.StatusCode.Should().Be(HttpStatusCode.Forbidden, "only the owner may approve udhaar");
+        partPaid.StatusCode.Should().Be(HttpStatusCode.Created, "the owner lets the counter take part payments");
+
+        var wholeBill = await staff.PostAsJsonAsync("/api/invoices", new
+        {
+            customerId,
+            amountPaid = 0m,
+            paymentMethod = "Credit",
+            items = new[] { new { productId, quantity = 1, unitSalePrice = 1000m } },
+        });
+
+        wholeBill.StatusCode.Should().Be(HttpStatusCode.Forbidden, "only the owner may put the whole bill on udhaar");
     }
 
     [Fact]

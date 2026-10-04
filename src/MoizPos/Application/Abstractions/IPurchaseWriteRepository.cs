@@ -34,6 +34,24 @@ public sealed record SupplierBalanceSnapshot
     public decimal PayableBalance { get; init; }
 }
 
+/// <summary>A purchase bill as a payment against it needs it: locked, with what it still owes.</summary>
+public sealed record PurchaseBillDueSnapshot
+{
+    public long Id { get; init; }
+
+    public long SupplierId { get; init; }
+
+    public DateOnly BillDate { get; init; }
+
+    public decimal Total { get; init; }
+
+    /// <summary>Paid against this bill so far.</summary>
+    public decimal Paid { get; init; }
+
+    /// <summary>The value of its goods sent back to the supplier.</summary>
+    public decimal Returned { get; init; }
+}
+
 /// <summary>
 /// The write side of purchasing.
 ///
@@ -53,6 +71,7 @@ public interface IPurchaseWriteRepository
     Task<SupplierBalanceSnapshot?> LockSupplierAsync(
         IUnitOfWork unitOfWork, long supplierId, CancellationToken cancellationToken = default);
 
+    /// <param name="purchaseBillId">The bill this line belongs to; null for a purchase on its own.</param>
     Task<long> InsertPurchaseAsync(
         IUnitOfWork unitOfWork,
         long supplierId,
@@ -63,7 +82,24 @@ public interface IPurchaseWriteRepository
         decimal total,
         long userId,
         DateTime nowUtc,
+        CancellationToken cancellationToken = default,
+        long? purchaseBillId = null);
+
+    /// <summary>A supplier's bill. Its lines are ordinary purchases naming it.</summary>
+    Task<long> InsertPurchaseBillAsync(
+        IUnitOfWork unitOfWork,
+        long supplierId,
+        string? billNumber,
+        DateOnly billDate,
+        decimal total,
+        string? note,
+        long userId,
+        DateTime nowUtc,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The bill, LOCKED, with what has been paid against it and returned from it.</summary>
+    Task<PurchaseBillDueSnapshot?> LockPurchaseBillAsync(
+        IUnitOfWork unitOfWork, long billId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Applies the new quantity, the overwritten cost and both selling prices in ONE statement.
@@ -100,5 +136,9 @@ public interface IPurchaseWriteRepository
         long? shopAccountId,
         long userId,
         DateTime nowUtc,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        // The day it was really paid; now when null.
+        DateTime? paymentDateUtc = null,
+        // The bill it was paid against; null for a payment on the account in general.
+        long? purchaseBillId = null);
 }

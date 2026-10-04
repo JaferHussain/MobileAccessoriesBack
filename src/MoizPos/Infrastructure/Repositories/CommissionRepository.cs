@@ -117,7 +117,8 @@ public sealed class CommissionRepository : ICommissionRepository
         var rows = await connection.QueryAsync<CommissionPayoutRow>(
             """
             SELECT p.id AS Id, p.amount AS Amount, CAST(p.payment_method AS CHAR) AS PaymentMethod,
-                   p.note AS Note, p.paid_at_utc AS PaidAtUtc, u.full_name AS RecordedBy
+                   p.note AS Note, p.paid_at_utc AS PaidAtUtc, u.full_name AS RecordedBy,
+                   (p.payment_proof_path IS NOT NULL) AS HasProof
             FROM commission_payouts p
             JOIN users u ON u.id = p.recorded_by_user_id
             WHERE p.user_id = @userId

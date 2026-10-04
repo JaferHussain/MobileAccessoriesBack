@@ -56,19 +56,59 @@ public sealed class PurchaseWriteRepository : IPurchaseWriteRepository
         decimal total,
         long userId,
         DateTime nowUtc,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? purchaseBillId = null)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO purchases
-                (supplier_id, product_id, purchase_date_utc, unit_cost, quantity, total,
+                (supplier_id, purchase_bill_id, product_id, purchase_date_utc, unit_cost, quantity, total,
                  user_id, created_at_utc)
             VALUES
-                (@supplierId, @productId, @purchaseDateUtc, @unitCost, @quantity, @total,
+                (@supplierId, @purchaseBillId, @productId, @purchaseDateUtc, @unitCost, @quantity, @total,
                  @userId, @nowUtc);
             SELECT LAST_INSERT_ID();
             """,
-            new { supplierId, productId, purchaseDateUtc, unitCost, quantity, total, userId, nowUtc },
+            new { supplierId, purchaseBillId, productId, purchaseDateUtc, unitCost, quantity, total, userId, nowUtc },
+            unitOfWork.Transaction);
+    }
+
+    public async Task<long> InsertPurchaseBillAsync(
+        IUnitOfWork unitOfWork,
+        long supplierId,
+        string? billNumber,
+        DateOnly billDate,
+        decimal total,
+        string? note,
+        long userId,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        return await unitOfWork.Connection.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO purchase_bills (supplier_id, bill_number, bill_date, total, note, user_id, created_at_utc)
+            VALUES (@supplierId, @billNumber, @billDate, @total, @note, @userId, @nowUtc);
+            SELECT LAST_INSERT_ID();
+            """,
+            new { supplierId, billNumber, billDate = billDate.ToDateTime(TimeOnly.MinValue), total, note, userId, nowUtc },
+            unitOfWork.Transaction);
+    }
+
+    public async Task<PurchaseBillDueSnapshot?> LockPurchaseBillAsync(
+        IUnitOfWork unitOfWork, long billId, CancellationToken cancellationToken = default)
+    {
+        return await unitOfWork.Connection.QuerySingleOrDefaultAsync<PurchaseBillDueSnapshot>(
+            """
+            SELECT b.id AS Id, b.supplier_id AS SupplierId, b.bill_date AS BillDate, b.total AS Total,
+                   COALESCE((SELECT SUM(sp.amount) FROM supplier_payments sp WHERE sp.purchase_bill_id = b.id), 0) AS Paid,
+                   COALESCE((SELECT SUM(r.total) FROM purchase_returns r
+                             JOIN purchases p ON p.id = r.purchase_id
+                             WHERE p.purchase_bill_id = b.id), 0) AS Returned
+            FROM purchase_bills b
+            WHERE b.id = @billId
+            FOR UPDATE;
+            """,
+            new { billId },
             unitOfWork.Transaction);
     }
 
@@ -123,22 +163,26 @@ public sealed class PurchaseWriteRepository : IPurchaseWriteRepository
         long? shopAccountId,
         long userId,
         DateTime nowUtc,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DateTime? paymentDateUtc = null,
+        long? purchaseBillId = null)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO supplier_payments
-                (supplier_id, amount, payment_date_utc, payment_method, shop_account_id, is_overpayment,
+                (supplier_id, purchase_bill_id, amount, payment_date_utc, payment_method, shop_account_id, is_overpayment,
                  note, user_id, created_at_utc)
             VALUES
-                (@supplierId, @amount, @nowUtc, @paymentMethod, @shopAccountId, @isOverpayment,
+                (@supplierId, @purchaseBillId, @amount, @paymentDateUtc, @paymentMethod, @shopAccountId, @isOverpayment,
                  @note, @userId, @nowUtc);
             SELECT LAST_INSERT_ID();
             """,
             new
             {
                 supplierId,
+                purchaseBillId,
                 amount,
+                paymentDateUtc = paymentDateUtc ?? nowUtc,
                 nowUtc,
                 paymentMethod = paymentMethod.ToString(),
                 isOverpayment,

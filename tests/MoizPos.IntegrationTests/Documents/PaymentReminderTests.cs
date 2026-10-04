@@ -61,7 +61,7 @@ public sealed class PaymentReminderTests
             new { name = $"Rem {Guid.NewGuid():N}"[..20] });
     }
 
-    private static async Task<long> CustomerAsync(HttpClient admin, string? mobileNumber = "03001234567")
+    private async Task<long> CustomerAsync(HttpClient admin, string? mobileNumber = "03001234567")
     {
         var created = await admin.PostAsJsonAsync("/api/customers", new
         {
@@ -69,8 +69,11 @@ public sealed class PaymentReminderTests
             mobileNumber,
         });
 
-        return (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
+        var id = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
             .Data!.GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(id);
+
+        return id;
     }
 
     private async Task SellOnCreditAsync(HttpClient admin, long customerId, decimal amount)

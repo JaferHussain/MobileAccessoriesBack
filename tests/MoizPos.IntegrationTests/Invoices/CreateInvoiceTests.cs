@@ -64,8 +64,8 @@ public sealed class CreateInvoiceTests
 
         return await connection.ExecuteScalarAsync<long>(
             """
-            INSERT INTO customers (name, mobile_number, outstanding_balance, is_active, created_at_utc)
-            VALUES (@name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
+            INSERT INTO customers (credit_allowed, name, mobile_number, outstanding_balance, is_active, created_at_utc)
+            VALUES (TRUE, @name, '923001234567', 0, TRUE, UTC_TIMESTAMP(6));
             SELECT LAST_INSERT_ID();
             """,
             new { name = $"Cust {Guid.NewGuid():N}"[..18] });

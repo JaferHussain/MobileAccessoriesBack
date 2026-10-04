@@ -76,9 +76,15 @@ finds only Oppo chargers (feature 003).
 
 ## Credit authority
 
-**Only an Admin may complete a sale that leaves any amount outstanding** (FR-051, FR-052). A
-Staff user selling for full payment is unaffected, and can still record recovery payments — 
-collecting a debt does not create one.
+**Who may complete a sale that leaves money outstanding** (FR-051, FR-052, widened twice since):
+the **owner**, always; a **field salesman**, only to a registered udhaar customer; the **counter
+shopkeeper**, only as a **part payment** — some money now, the rest owed — never the whole bill on
+udhaar (`UdhaarAuthority.MayLeaveOwing`). Anyone may sell for full payment and record recovery
+payments — collecting a debt does not create one.
+
+- **"Part payment" is the RECOMPUTED amount paid above zero**, never the label. A sale labelled
+  `Cash` with nothing paid is full udhaar and refused to the counter;
+  `The_shopkeeper_cannot_dodge_the_rule_by_calling_full_udhaar_a_cash_sale` asserts exactly that.
 
 The rule lives in `InvoiceService.CreateAsync`, applied to the **server-recomputed**
 `totals.AmountRemaining`, after pricing and the stock check and **before the first write**.
@@ -92,6 +98,12 @@ The rule lives in `InvoiceService.CreateAsync`, applied to the **server-recomput
   balance change. `A_refused_credit_sale_changes_absolutely_nothing` asserts all four.
 - `CreateAsync` takes the caller's `UserRole` as an argument rather than reading ambient context,
   so the rule stays unit-testable and cannot be bypassed by a caller that forgets to set one.
+- **That is WHO may give credit. TO WHOM is `CreditEligibility` (pure)**, checked right after it,
+  for everyone including the owner: a registered **udhaar customer** may owe all or part; anyone
+  else may only **pay part**, and only with a **phone number** on file (a walk-in's is taken at
+  the counter); nobody else takes the whole bill on udhaar. WHO is checked first, so a shopkeeper
+  who cannot give credit at all hears that (403) rather than a to-whom refusal (422). A walk-in's
+  part payment is also checked **before** the quick-create, so a refusal leaves no contact behind.
 
 ## Opening balances
 
@@ -191,12 +203,13 @@ until now, so walking to the Products list to fetch a second item destroyed it �
 Asked once, at the end, in `CheckoutModal` — not while the cart is being built. The counter's
 button is **"Proceed to sale"**; the modal's is **"Complete sale"**.
 
-- **The existing-customer picker is the point of this component.** Before it the counter could
-  only *create* a customer, so selling to the same person twice on udhaar produced two records
-  with two balances, and the owner chasing a debt saw half of it. Walk-in / Existing / New —
-  and the picker shows what each customer already owes before adding to it.
-- **Udhaar and part payment require a customer**, mirroring the server (FR-017). A walk-in is
-  refused with an explanation rather than silently allowed.
+- **Two kinds of customer, and only two: Walk-in / Udhaar customer.** The udhaar-customer picker
+  finds registered udhaar customers only and shows what each already owes. "New customer" was
+  removed: nobody gets credit at the counter without being registered first (see *Registering an
+  udhaar customer*).
+- **Full udhaar needs an udhaar customer; a part payment needs a customer with a phone number**,
+  mirroring `CreditEligibility` on the server. A walk-in paying part gives a name and phone at the
+  counter and is recorded as an ordinary customer — not an udhaar customer.
 - A part payment must be **more than zero and less than the total**. Anything else is a full
   payment mislabelled.
 - **`amountPaid` is derived, never typed twice**: a cash-type method settles the bill, `Credit`
@@ -251,8 +264,10 @@ customer's hand".
 
 ## Transaction proofs (every non-cash transaction)
 
-The owner's rule: **every transaction except cash is kept with its proof.** Five kinds carry one
-screenshot each (migration `0018` for sales, `0030` for the rest):
+The owner's rule: **every transaction except cash is kept with its proof.** Seven kinds carry one
+screenshot each (migration `0018` for sales, `0030` for the next four, `0037` handovers, `0038`
+commission) — every table where money moves. Purchases, purchase returns, stock issues and opening
+balances move no money, so they have no payment to prove:
 
 | Kind (`/api/proofs/{kind}/{id}`) | Column | Who may attach and view |
 |---|---|---|
@@ -261,10 +276,16 @@ screenshot each (migration `0018` for sales, `0030` for the rest):
 | `refund` (after a sale return) | `sale_returns.refund_proof_path` | any signed-in user |
 | `supplier-payment` | `supplier_payments.payment_proof_path` | Admin only |
 | `expense` (Bank only) | `expenses.payment_proof_path` | Admin only |
+| `salesman-handover` (money a field salesman handed over by transfer) | `salesman_handovers.payment_proof_path` | Admin only — the owner records handovers |
+| `commission-payout` (commission paid to a salesman by transfer) | `commission_payouts.payment_proof_path` | Admin only — the owner pays it |
+| `purchase-bill` (a photo of the supplier's bill — the goods, not a payment) | `purchase_bills.bill_image_path` | Admin only; never refused, never on Proof missing |
 
-- **One controller for all five** (`ProofsController`): `POST` attaches or replaces, `GET` streams
+- **One controller for all seven** (`ProofsController`): `POST` attaches or replaces, `GET` streams
   the image. `TransactionProofRules` (pure) decides who and when: cash is refused, a Till expense
   is refused, a return that refunded nothing is refused.
+- **Asked for at the moment money moves, on every payment form — and still optional.** Each
+  write that a proof can follow answers with the new record's id (`paymentId`, `returnId`,
+  `handoverId`, `payoutId`, the invoice id) so the screen saves first and attaches second.
 - **Optional when the transaction is saved, never blocking it.** `GET /api/proofs/missing`
   (Admin) — the **Proof missing** screen under Money — lists every transfer-paid transaction still
   without one, so "every transaction is provable" holds without the counter waiting on a picture.
@@ -473,6 +494,35 @@ sellable.** Add product → record a purchase → sell.
   would otherwise happily sell an unpriced product at whatever it claimed.
 - Tests that need something sellable but are not about stocking use
   `ApiFactory.StockProductAsync(...)`. The real rule lives in `Products/StockingFlowTests`.
+
+## Purchase bills — a supplier's bill, and the payment made with it
+
+`purchase_bills` (migration `0039`): one supplier's bill — bill number, **bill date** (a `DATE`),
+total, note, and a photo of the bill. Its lines are ordinary `purchases` rows naming it
+(`purchases.purchase_bill_id`), so stock, the latest-cost rule, returns and the supplier ledger are
+unchanged. A supplier payment may name the bill it was made against
+(`supplier_payments.purchase_bill_id`). `POST /api/purchase-bills` records one; `{id}/payments`
+pays it later; `GET` lists bills and one bill's lines and payments. Owner only — a bill is cost.
+
+- **One transaction, stock first, then the payment** (`PurchaseBillService.RecordAsync`): every
+  line is stocked, the payable rises by the bill's total, and only then is the payment (if any)
+  written against it. All of it or none of it: one bad line saves nothing at all.
+- **Every line goes through `PurchaseLineWriter`** — the same code a single `POST /api/purchases`
+  runs — so the costing rule and the first-stocking price rule live in one place. Locks: products
+  ordered by id, then the supplier, the order a single purchase takes.
+- **A payment carries the day it was really made** (`paidOn`): never in the future, **never before
+  the bill**, and — for **cash** — never a day whose drawer is already counted (a closing is a
+  snapshot; cash slipped in behind it would never be seen). A past day is stored as midday that
+  day so day close and reports place it there. So in the supplier's ledger the goods always come
+  before their payment.
+- **Paid with the bill: no more than the bill.** An older balance is paid from the supplier's
+  account as before. **Paid later: no more than the bill still owes** (total − returned − paid
+  against it), checked on the LOCKED bill row.
+- **Payable stays supplier-level** and its invariant (purchases − returns − payments) is untouched;
+  a bill's Paid / PartPaid / Unpaid only counts payments made against it.
+- **The bill's photo is proof kind `purchase-bill`** — about the goods, not how money moved, so it
+  is never refused and never on Proof missing. The payment's screenshot is the ordinary
+  `supplier-payment` proof, attached to the `paymentId` the save returns.
 
 ## The two business rules that drive the design
 
@@ -764,18 +814,39 @@ earned once the customer has paid for it — and he may never sell below that pr
 
 ## The salesman in the market: udhaar customers and the cash he carries
 
-**Udhaar customers** (`customers.credit_allowed`, migration `0034`). The owner marks which customers
-the field salesman may leave money owing with. `UdhaarAuthority.MayLeaveOwing` (pure): the owner
-always; a `FieldSales` seller only for a marked customer; the counter shopkeeper never.
+**Udhaar customers** (`customers.credit_allowed`, migration `0034`). `UdhaarAuthority.MayLeaveOwing`
+(pure): the owner always; a `FieldSales` seller only for an udhaar customer; the counter shopkeeper
+a part payment only. Registering them is the next section.
 
 - **Still decided in `InvoiceService`, on the recomputed `AmountRemaining`, before the first
-  write** — the credit-authority rule is widened, not moved. A walk-in or an unmarked customer is
-  refused with words that say why.
-- **Owner-only to set**, like `SaleType`: `CustomerUpsertRequest.CreditAllowed` is applied only for
-  an Admin and silently ignored otherwise; a Staff quick-create is always unmarked. A salesman must
-  never be able to grant himself a customer to give credit to.
+  write** — the credit-authority rule is widened, not moved. A walk-in or an unregistered customer
+  is refused with words that say why.
 - `0034` backfilled the mark onto every customer who already had udhaar history (a balance, an
   opening balance, or an invoice with money remaining) — the owner's "already categorised" ones.
+
+## Registering an udhaar customer
+
+The owner's rule: **only a registered udhaar customer may be sold to on full udhaar** — registered
+by the owner with name, phone and **both sides of their ID card** (migration `0036`:
+`customers.id_card_front_path`, `id_card_back_path`). `/api/udhaar-customers` — **owner only, every
+route**: list, a customer's standing, register new (multipart: `name`, `mobileNumber`, `idCardFront`,
+`idCardBack`), `{id}/register` (make an existing customer one, or complete a missing card — a side
+already on file need not be sent again), `DELETE` (take the mark away; what they owe and the photos
+are kept), `{id}/id-card/{front|back}` (stream one side).
+
+- **The mark is granted only here.** `POST`/`PUT /api/customers` refuse `creditAllowed: true` (422)
+  — the old tick would get round the ID card. Setting it false through `PUT` is still the owner's.
+- **The photos are as private as payment proofs**: saved by `ImageStorageService.SaveIdCardAsync`
+  into `{PaymentProofRoot}/id-cards/` — outside wwwroot, never on the public receipt link, opened
+  only through `OpenPaymentProof`'s containment check, and carried by the proofs backup zip.
+- **No response carries where a photo is stored.** `UdhaarCustomerRow` says `hasIdCardFront` /
+  `hasIdCardBack` / `idCardMissing`; the `Customer` entity the customer API returns has no photo
+  field at all. `The_customer_api_never_carries_where_an_id_card_is_stored` guards it.
+- **Customers marked by `0034` stay eligible** with no photos, flagged `idCardMissing` until the
+  owner completes them — blocking them would stop sales to people who already owe the shop.
+  `ApiFactory.MarkUdhaarAsync` seeds exactly that state for tests about credit that are not about
+  registering; `ApiFactory.RegisterUdhaarCustomerAsync` goes through the real endpoint.
+- `GET /api/customers?udhaarOnly=true` is what checkout searches — open to staff, carries no photos.
 
 **His cash** (`in_field` on `invoices`, `customer_payments`, `sale_returns`; `salesman_handovers`).
 
@@ -793,6 +864,10 @@ always; a `FieldSales` seller only for a marked customer; the counter shopkeeper
   he holds is a 422.
 - `GET /api/salesman-cash/me` gives a salesman his own; `/{userId}` is Admin. The Team card shows
   `cashInHand` (all-time) for a field salesman.
+- **A handover by transfer is kept with its screenshot** (proof kind `salesman-handover`); a cash
+  one is refused a proof, like every cash movement. The handover's response carries `handoverId`
+  so the page can attach the screenshot straight after saving, and each handover movement says
+  `hasProof`. One without its screenshot waits on Proof missing as "Received from salesman".
 
 **His own screen** — `GET /api/my-day?from=&to=` (any signed-in user; today when left out): the
 same card the owner sees on Team, plus his sales, returns and recoveries (`TeamService.MineAsync`).
@@ -837,6 +912,24 @@ in and out of his bag), migration `0035`. The owner **issues** goods and **takes
   Worked out in `ProductService.ProjectAllAsync` with one extra display query per page — kept out
   of the search SQL so the five-thousand-product bound is unaffected. These are quantities, not
   cost, so they sit on the Staff shape.
+
+## Recovery — who owes, most overdue first
+
+`GET /api/recovery` — every customer whose balance is above zero, with how much, since when, when
+it fell due, how many months overdue, and **the bills still open**. Any signed-in user, like the
+customer list and receiving a payment: collecting is everyone's job, and it carries no cost.
+
+- **Which bills are open is derived, never stored** (`RecoverySettlement`, pure): payments settle
+  the **oldest debt first** — the same rule `UdhaarDueDate` and the commission follow — so the
+  open bills are the newest ones, each `NotPaid` or `PartPaid`. Money handed over with a later sale
+  still goes against the oldest debt; a correction that lowered what was owed counts as a payment.
+  A customer's account is one balance; this only says which bills it is made of.
+- **The due date runs from the oldest open bill**, through `UdhaarDueDate.For`, so the page, the
+  reminder and the receipt can never disagree about who is overdue.
+- **Two reads however many owe** (`RecoveryRepository`): the owing customers, then all their ledger
+  lines in one query, ordered by customer then id. Most overdue first, then oldest debt.
+- Taking a payment from the page is the existing `POST /api/customers/{id}/payments`; nothing about
+  money moving is new here.
 
 ## Who sold what
 

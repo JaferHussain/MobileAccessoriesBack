@@ -116,13 +116,15 @@ public sealed class FieldSalesTests
         });
     }
 
+    /// <summary>An udhaar customer is registered with the ID card; anyone else is an ordinary contact.</summary>
     private static async Task<long> CustomerAsync(HttpClient admin, bool creditAllowed)
     {
-        var created = await admin.PostAsJsonAsync("/api/customers", new
+        if (creditAllowed)
         {
-            name = $"Shop {Guid.NewGuid():N}"[..14],
-            creditAllowed,
-        });
+            return await ApiFactory.RegisterUdhaarCustomerAsync(admin);
+        }
+
+        var created = await admin.PostAsJsonAsync("/api/customers", new { name = $"Shop {Guid.NewGuid():N}"[..14] });
 
         return (await DataAsync(created)).GetProperty("id").GetInt64();
     }
@@ -175,23 +177,39 @@ public sealed class FieldSalesTests
     }
 
     [Fact]
-    public async Task Only_the_owner_can_mark_an_udhaar_customer()
+    public async Task Only_the_owner_can_make_an_udhaar_customer_and_only_by_registering_them()
     {
         var admin = await AdminAsync();
         var (_, salesman, _) = await StaffAsync(admin, "FieldSales");
 
-        // A customer the salesman creates himself is never an udhaar customer…
-        var created = await salesman.PostAsJsonAsync("/api/customers", new { name = $"Own {Guid.NewGuid():N}"[..13], creditAllowed = true });
+        // A customer the salesman creates is an ordinary contact…
+        var created = await salesman.PostAsJsonAsync("/api/customers", new { name = $"Own {Guid.NewGuid():N}"[..13] });
         var customer = await DataAsync(created);
         customer.GetProperty("creditAllowed").GetBoolean().Should().BeFalse();
-
-        // …and cannot become one by his hand.
         var id = customer.GetProperty("id").GetInt64();
-        await salesman.PutAsJsonAsync($"/api/customers/{id}", new { name = customer.GetProperty("name").GetString(), creditAllowed = true });
-        (await DataAsync(await admin.GetAsync($"/api/customers/{id}"))).GetProperty("creditAllowed").GetBoolean().Should().BeFalse();
 
-        // The owner's mark is what counts.
-        await admin.PutAsJsonAsync($"/api/customers/{id}", new { name = customer.GetProperty("name").GetString(), creditAllowed = true });
+        // …no flag makes them an udhaar customer, by his hand or the owner's…
+        (await salesman.PutAsJsonAsync($"/api/customers/{id}", new { name = customer.GetProperty("name").GetString(), creditAllowed = true }))
+            .StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await admin.PutAsJsonAsync($"/api/customers/{id}", new { name = customer.GetProperty("name").GetString(), creditAllowed = true }))
+            .StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        // …and registering, with the ID card, is the owner's alone.
+        var form = new MultipartFormDataContent
+        {
+            { ApiFactory.Photo(), "idCardFront", "front.jpg" },
+            { ApiFactory.Photo(), "idCardBack", "back.jpg" },
+            { new StringContent("03001234567"), "mobileNumber" },
+        };
+        (await salesman.PostAsync($"/api/udhaar-customers/{id}/register", form)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        var again = new MultipartFormDataContent
+        {
+            { ApiFactory.Photo(), "idCardFront", "front.jpg" },
+            { ApiFactory.Photo(), "idCardBack", "back.jpg" },
+            { new StringContent("03001234567"), "mobileNumber" },
+        };
+        (await admin.PostAsync($"/api/udhaar-customers/{id}/register", again)).StatusCode.Should().Be(HttpStatusCode.OK);
         (await DataAsync(await admin.GetAsync($"/api/customers/{id}"))).GetProperty("creditAllowed").GetBoolean().Should().BeTrue();
     }
 
@@ -259,6 +277,76 @@ public sealed class FieldSalesTests
 
         (await DayAsync(admin)).GetProperty("cashFromSalesmen").GetDecimal().Should().Be(before);
         (await InHandAsync(admin, salesmanId)).Should().Be(0m);
+    }
+
+    // ================================================================
+    //  Proof of a handover that did not come as cash
+    // ================================================================
+
+    private static MultipartFormDataContent Screenshot() =>
+        new() { { ApiFactory.Photo(), "file", "transfer.jpg" } };
+
+    private static async Task<long> HandOverAsync(HttpClient admin, long salesmanId, string method)
+    {
+        var response = await admin.PostAsJsonAsync(
+            $"/api/salesman-cash/{salesmanId}/handovers", new { amount = 1000m, paymentMethod = method });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // The new handover's id, so its proof can be attached straight after.
+        return (await DataAsync(response)).GetProperty("handoverId").GetInt64();
+    }
+
+    [Fact]
+    public async Task A_handover_by_transfer_takes_its_screenshot_and_is_on_proof_missing_until_it_has_one()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman, _) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, 1000m);
+
+        var handoverId = await HandOverAsync(admin, salesmanId, "JazzCash");
+
+        static bool Listed(JsonElement missing, long id) => missing.EnumerateArray()
+            .Any(row => row.GetProperty("kind").GetString() == "SalesmanHandover" && row.GetProperty("referenceId").GetInt64() == id);
+
+        Listed(await DataAsync(await admin.GetAsync("/api/proofs/missing")), handoverId).Should().BeTrue();
+
+        (await admin.PostAsync($"/api/proofs/salesman-handover/{handoverId}", Screenshot())).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+
+        Listed(await DataAsync(await admin.GetAsync("/api/proofs/missing")), handoverId).Should().BeFalse();
+        (await admin.GetAsync($"/api/proofs/salesman-handover/{handoverId}")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var movement = (await DataAsync(await admin.GetAsync($"/api/salesman-cash/{salesmanId}")))
+            .GetProperty("movements").EnumerateArray()
+            .Single(row => row.GetProperty("kind").GetString() == "Handover");
+        movement.GetProperty("hasProof").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_cash_handover_needs_no_proof_because_it_was_counted_into_the_drawer()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman, _) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, 1000m);
+
+        var handoverId = await HandOverAsync(admin, salesmanId, "Cash");
+
+        (await admin.PostAsync($"/api/proofs/salesman-handover/{handoverId}", Screenshot())).StatusCode
+            .Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Only_the_owner_attaches_or_sees_a_handover_proof()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman, _) = await StaffAsync(admin, "FieldSales");
+        await SellAsync(salesman, 1000m);
+        var handoverId = await HandOverAsync(admin, salesmanId, "BankTransfer");
+
+        (await salesman.PostAsync($"/api/proofs/salesman-handover/{handoverId}", Screenshot())).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
+        (await salesman.GetAsync($"/api/proofs/salesman-handover/{handoverId}")).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]

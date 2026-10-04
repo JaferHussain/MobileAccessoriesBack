@@ -27,7 +27,8 @@ public sealed record CommissionLine(
     /// <summary>The day the sale was paid for in full — when its commission was earned.</summary>
     DateOnly? EarnedOn);
 
-public sealed record CommissionPayout(long Id, decimal Amount, string PaymentMethod, string? Note, DateTime PaidAtUtc, string RecordedBy);
+public sealed record CommissionPayout(
+    long Id, decimal Amount, string PaymentMethod, string? Note, DateTime PaidAtUtc, string RecordedBy, bool HasProof = false);
 
 /// <summary>A salesman's commission account. All-time figures: Earned − PaidOut = Owed.</summary>
 public sealed record CommissionStatement(
@@ -40,7 +41,9 @@ public sealed record CommissionStatement(
     decimal PaidOut,
     decimal Owed,
     IReadOnlyList<CommissionLine> Lines,
-    IReadOnlyList<CommissionPayout> Payouts);
+    IReadOnlyList<CommissionPayout> Payouts,
+    /// <summary>Set only in answer to a payout just recorded — so its proof can be attached straight after.</summary>
+    long? PayoutId = null);
 
 public interface ICommissionService
 {
@@ -111,7 +114,7 @@ public sealed class CommissionService : ICommissionService
 
         var payouts = (await _commission.PayoutsAsync(userId, cancellationToken))
             .Select(payout => new CommissionPayout(
-                payout.Id, payout.Amount, payout.PaymentMethod, payout.Note, payout.PaidAtUtc, payout.RecordedBy))
+                payout.Id, payout.Amount, payout.PaymentMethod, payout.Note, payout.PaidAtUtc, payout.RecordedBy, payout.HasProof))
             .ToList();
 
         var totalCommission = lines.Sum(line => line.Commission);
@@ -150,11 +153,11 @@ public sealed class CommissionService : ICommissionService
                 "Commission on udhaar that has not been recovered is not earned yet.");
         }
 
-        await _commission.InsertPayoutAsync(
+        var payoutId = await _commission.InsertPayoutAsync(
             userId, amount, method, string.IsNullOrWhiteSpace(note) ? null : note.Trim(), paidByUserId, _clock.UtcNow,
             cancellationToken);
 
-        return await StatementAsync(userId, cancellationToken);
+        return await StatementAsync(userId, cancellationToken) with { PayoutId = payoutId };
     }
 
     /// <summary>How much of each of this salesman's sales has been paid, oldest debt first per customer.</summary>

@@ -173,13 +173,15 @@ public interface IInvoiceReadRepository
 /// <summary>Customer reads and writes.</summary>
 public interface ICustomerRepository
 {
+    /// <param name="udhaarOnly">Only registered udhaar customers — what checkout offers for udhaar.</param>
     Task<(IReadOnlyList<Customer> Items, int TotalItems)> SearchAsync(
         string? search,
         bool withBalanceOnly,
         SaleType? saleType,
         int page,
         int pageSize,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool udhaarOnly = false);
 
     Task<Customer?> FindByIdAsync(long id, CancellationToken cancellationToken = default);
 

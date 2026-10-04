@@ -141,7 +141,6 @@ public sealed class PurchaseService : IPurchaseService
 
         var nowUtc = _clock.UtcNow;
         var purchaseDate = request.PurchaseDateUtc ?? nowUtc;
-        var total = Round(request.UnitCost * request.Quantity);
 
         await using var uow = await _unitOfWorkFactory.BeginAsync(cancellationToken);
 
@@ -152,74 +151,26 @@ public sealed class PurchaseService : IPurchaseService
         var supplier = await _purchases.LockSupplierAsync(uow, request.SupplierId, cancellationToken)
             ?? throw new NotFoundException("Supplier", request.SupplierId);
 
-        // 1. The purchase itself.
-        var purchaseId = await _purchases.InsertPurchaseAsync(
-            uow, request.SupplierId, request.ProductId, purchaseDate,
-            request.UnitCost, request.Quantity, total, userId, nowUtc, cancellationToken);
-
-        // The first delivery is what turns a catalogue entry into something sellable, so it is
-        // the one that must state a price. Checked against the LOCKED row, after the lock and
-        // before any write, so two first-purchases racing cannot both see "no price yet".
-        var isFirstStocking = product.RetailPrice <= 0m;
-
-        if (isFirstStocking && request.NewRetailPrice is null or <= 0m)
-        {
-            throw new BusinessRuleViolationException(
-                $"'{product.Name}' has no selling price yet. Set the retail price on this " +
-                "purchase — it is what makes the product sellable.");
-        }
-
-        // 2 & 3. Stock up; cost overwritten for ALL units on hand; prices set or left standing.
-        var newQuantity = StockRules.NextQuantity(product.QuantityOnHand, request.Quantity, product.Name);
-        var newCost = StockRules.NextCostPrice(product.CostPrice, request.UnitCost);
-
-        // Omitted means "leave it as it is" — a repeat delivery at the same price should not
-        // require the shopkeeper to retype what the shop already knows.
-        var newRetailPrice = request.NewRetailPrice ?? product.RetailPrice;
-        var newWholesalePrice = request.NewWholesalePrice ?? product.WholesalePrice;
-
-        await _purchases.UpdateProductStockAndPricingAsync(
-            uow, request.ProductId, newQuantity, newCost,
-            newRetailPrice, newWholesalePrice, nowUtc, cancellationToken);
+        // 1–3, 5–6: the purchase, stock, cost, prices, movement and product audits — the same
+        // writer a purchase bill uses for each of its lines.
+        var line = await PurchaseLineWriter.StockAsync(
+            uow, _purchases, _stockMovements, _audit, product, request.SupplierId, purchaseBillId: null,
+            request.Quantity, request.UnitCost, request.NewRetailPrice, request.NewWholesalePrice,
+            purchaseDate, userId, nowUtc, cancellationToken);
 
         // 4. What the shop now owes.
-        var newPayable = Round(supplier.PayableBalance + total);
+        var newPayable = Round(supplier.PayableBalance + line.Total);
 
         await _purchases.UpdateSupplierPayableAsync(
             uow, request.SupplierId, newPayable, nowUtc, cancellationToken);
 
-        // 5. The movement explaining the quantity change.
-        await _stockMovements.AppendAsync(
-            uow, request.ProductId, request.Quantity, newQuantity,
-            StockMovementReason.Purchase, purchaseId, userId,
-            note: null, nowUtc, cancellationToken);
-
-        // 6. Audit every value that moved.
-        await AuditAsync(uow, "Product", request.ProductId, "quantity_on_hand",
-            product.QuantityOnHand, newQuantity, "Purchase", userId, nowUtc, cancellationToken);
-
-        await AuditAsync(uow, "Product", request.ProductId, "cost_price",
-            product.CostPrice, newCost, "Purchase", userId, nowUtc, cancellationToken);
-
         await AuditAsync(uow, "Supplier", request.SupplierId, "payable_balance",
             supplier.PayableBalance, newPayable, "Purchase", userId, nowUtc, cancellationToken);
-
-        if (newRetailPrice != product.RetailPrice)
-        {
-            await AuditAsync(uow, "Product", request.ProductId, "retail_price",
-                product.RetailPrice, newRetailPrice, "Purchase", userId, nowUtc, cancellationToken);
-        }
-
-        if (newWholesalePrice != product.WholesalePrice)
-        {
-            await AuditAsync(uow, "Product", request.ProductId, "wholesale_price",
-                product.WholesalePrice, newWholesalePrice, "Purchase", userId, nowUtc, cancellationToken);
-        }
 
         await uow.CommitAsync(cancellationToken);
 
         return new RecordPurchaseResult(
-            purchaseId, newQuantity, newCost, newPayable, newRetailPrice, newWholesalePrice);
+            line.PurchaseId, line.NewQuantityOnHand, line.NewCostPrice, newPayable, line.NewRetailPrice, line.NewWholesalePrice);
     }
 
     public async Task<SupplierPaymentResult> RecordSupplierPaymentAsync(

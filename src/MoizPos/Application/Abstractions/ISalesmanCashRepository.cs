@@ -25,6 +25,9 @@ public sealed record SalesmanCashMovementRow
 
     /// <summary>The customer, or who received a handover and any note.</summary>
     public string? Detail { get; init; }
+
+    /// <summary>A handover's screenshot is attached. Always false for his sales, recoveries and refunds here.</summary>
+    public bool HasProof { get; init; }
 }
 
 public interface ISalesmanCashRepository

@@ -18,6 +18,10 @@ public sealed class TransactionProofRepository : ITransactionProofRepository
         ProofKind.SupplierPayment => ("supplier_payments", "payment_proof_path", "payment_method"),
         ProofKind.Refund => ("sale_returns", "refund_proof_path", "refund_method"),
         ProofKind.Expense => ("expenses", "payment_proof_path", "payment_source"),
+        ProofKind.SalesmanHandover => ("salesman_handovers", "payment_proof_path", "payment_method"),
+        ProofKind.CommissionPayout => ("commission_payouts", "payment_proof_path", "payment_method"),
+        // A bill photo is about the goods, not how money moved: a fixed "method" no rule refuses.
+        ProofKind.PurchaseBill => ("purchase_bills", "bill_image_path", "'Bill'"),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a kind of proof."),
     };
 
@@ -134,6 +138,34 @@ public sealed class TransactionProofRepository : ITransactionProofRepository
                 JOIN expense_categories ec ON ec.id = e.category_id
                 WHERE e.payment_source = 'Bank'
                   AND e.payment_proof_path IS NULL
+
+                UNION ALL
+
+                SELECT 'SalesmanHandover',
+                       h.id,
+                       CAST('Received from salesman' AS CHAR),
+                       h.received_at_utc,
+                       CAST(u.full_name AS CHAR),
+                       CAST(h.payment_method AS CHAR),
+                       h.amount
+                FROM salesman_handovers h
+                JOIN users u ON u.id = h.user_id
+                WHERE h.payment_method IN ('BankTransfer', 'JazzCash', 'EasyPaisa', 'Raast')
+                  AND h.payment_proof_path IS NULL
+
+                UNION ALL
+
+                SELECT 'CommissionPayout',
+                       cp.id,
+                       CAST('Commission paid' AS CHAR),
+                       cp.paid_at_utc,
+                       CAST(u.full_name AS CHAR),
+                       CAST(cp.payment_method AS CHAR),
+                       cp.amount
+                FROM commission_payouts cp
+                JOIN users u ON u.id = cp.user_id
+                WHERE cp.payment_method IN ('BankTransfer', 'JazzCash', 'EasyPaisa', 'Raast')
+                  AND cp.payment_proof_path IS NULL
             ) missing
             WHERE (@fromUtc IS NULL OR missing.EntryDateUtc >= @fromUtc)
               AND (@toUtc   IS NULL OR missing.EntryDateUtc <  @toUtc)

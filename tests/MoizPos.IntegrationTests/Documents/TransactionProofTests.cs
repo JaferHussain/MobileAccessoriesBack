@@ -86,7 +86,7 @@ public sealed class TransactionProofTests
         return productId;
     }
 
-    private static async Task<long> CustomerAsync(HttpClient admin)
+    private async Task<long> CustomerAsync(HttpClient admin)
     {
         var response = await admin.PostAsJsonAsync("/api/customers", new
         {
@@ -94,7 +94,10 @@ public sealed class TransactionProofTests
             mobileNumber = "03001234567",
         });
 
-        return (await DataAsync(response)).GetProperty("id").GetInt64();
+        var id = (await DataAsync(response)).GetProperty("id").GetInt64();
+        await _api.MarkUdhaarAsync(id);
+
+        return id;
     }
 
     private async Task<long> SaleAsync(HttpClient admin, long? customerId, decimal amountPaid, string paymentMethod)

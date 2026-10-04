@@ -138,6 +138,25 @@ public sealed class InvoiceService : IInvoiceService
 
         var nowUtc = _clock.UtcNow;
 
+        // A walk-in paying part: checked BEFORE the quick-create below, so a refused sale does not
+        // leave a new contact behind. The figures are the same pure calculation the sale uses.
+        if (request.CustomerId is null && request.NewCustomer is not null)
+        {
+            var early = InvoiceCalculator.Calculate(
+                request.Items.Select(i => new InvoiceLineInput(i.Quantity, i.UnitSalePrice, i.LineDiscount)).ToList(),
+                request.OrderDiscount,
+                request.AmountPaid);
+
+            var refusal = CreditEligibility.Refusal(
+                early.AmountPaid, early.AmountRemaining, isUdhaarCustomer: false,
+                hasMobile: !string.IsNullOrWhiteSpace(request.NewCustomer.MobileNumber));
+
+            if (refusal is not null)
+            {
+                throw new BusinessRuleViolationException(refusal);
+            }
+        }
+
         // A quick-created customer is committed before the sale: if the sale then fails, the shop
         // keeps a harmless new contact rather than losing the details the shopkeeper just typed.
         var customerId = request.CustomerId ?? await QuickCreateCustomerAsync(request, cancellationToken);
@@ -264,6 +283,11 @@ public sealed class InvoiceService : IInvoiceService
             throw new CustomerRequiredException(totals.AmountRemaining);
         }
 
+        // The buyer, read once: both checks below ask about them.
+        var buyer = totals.AmountRemaining > 0m && customerId is { } buyerId
+            ? await _customers.FindByIdAsync(buyerId, cancellationToken)
+            : null;
+
         // Only the owner may let goods leave against a debt (FR-051, FR-052).
         //
         // Decided from the SERVER'S recomputed total, not from request.PaymentMethod and not from
@@ -278,17 +302,36 @@ public sealed class InvoiceService : IInvoiceService
         // during this sale cannot have been marked by anyone.
         if (totals.AmountRemaining > 0m && role != UserRole.Admin)
         {
-            var isUdhaarCustomer = request.CustomerId is { } existingId
-                && (await _customers.FindByIdAsync(existingId, cancellationToken))?.CreditAllowed == true;
+            var isUdhaarCustomer = request.CustomerId is not null && buyer?.CreditAllowed == true;
 
-            if (!UdhaarAuthority.MayLeaveOwing(role, sellerJob, isUdhaarCustomer))
+            // A part payment is judged on the RECOMPUTED amount paid, never the label on the sale.
+            if (!UdhaarAuthority.MayLeaveOwing(role, sellerJob, isUdhaarCustomer, isPartPayment: totals.AmountPaid > 0m))
             {
                 throw sellerJob == StaffJob.FieldSales
                     ? new CreditRequiresAdminException(
                         totals.AmountRemaining,
                         $"This customer is not one of the owner's udhaar customers, so this sale cannot leave " +
-                        $"Rs {totals.AmountRemaining:N2} unpaid. Take the full amount, or ask the owner to mark them.")
-                    : new CreditRequiresAdminException(totals.AmountRemaining);
+                        $"Rs {totals.AmountRemaining:N2} unpaid. Take the full amount, or ask the owner to register them as an udhaar customer.")
+                    : new CreditRequiresAdminException(
+                        totals.AmountRemaining,
+                        $"Only the owner can put the whole bill on udhaar. Take part of the Rs {totals.Total:N2} now " +
+                        "and the rest can be owed — or take it all.");
+            }
+        }
+
+        // To WHOM money may be left owing — the owner's two kinds of customer (CreditEligibility):
+        // a registered udhaar customer may owe all or part; anyone else only part, and only with a
+        // phone number. Everyone, the owner included, before the first write.
+        if (totals.AmountRemaining > 0m)
+        {
+            var refusal = CreditEligibility.Refusal(
+                totals.AmountPaid, totals.AmountRemaining,
+                isUdhaarCustomer: request.CustomerId is not null && buyer?.CreditAllowed == true,
+                hasMobile: !string.IsNullOrWhiteSpace(buyer?.MobileNumber));
+
+            if (refusal is not null)
+            {
+                throw new BusinessRuleViolationException(refusal);
             }
         }
 

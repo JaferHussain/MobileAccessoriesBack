@@ -3,6 +3,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net.Http.Headers;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
 using MoizPos.Application.Services;
 using MoizPos.Domain.Enums;
 using MoizPos.Infrastructure.Auth;
@@ -183,6 +187,56 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
         await scope.ServiceProvider.GetRequiredService<ISalesmanStockService>()
             .IssueAsync(salesmanId, [new SalesmanStockLine(productId, quantity)], "Test seed", salesmanId);
+    }
+
+    /// <summary>A photo as the counter's phone would send it — a real, decodable JPEG.</summary>
+    public static ByteArrayContent Photo()
+    {
+        using var image = new Image<Rgba32>(320, 200);
+        var bytes = new MemoryStream();
+        image.Save(bytes, new JpegEncoder());
+
+        var file = new ByteArrayContent(bytes.ToArray());
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+
+        return file;
+    }
+
+    /// <summary>
+    /// Registers an udhaar customer the way the owner does — name, phone and both sides of the ID
+    /// card — through the real endpoint. Returns the new customer's id.
+    /// </summary>
+    public static async Task<long> RegisterUdhaarCustomerAsync(HttpClient owner, string? name = null)
+    {
+        var form = new MultipartFormDataContent
+        {
+            { new StringContent(name ?? $"Udhaar {Guid.NewGuid():N}"[..20]), "name" },
+            { new StringContent("03001234567"), "mobileNumber" },
+            { Photo(), "idCardFront", "front.jpg" },
+            { Photo(), "idCardBack", "back.jpg" },
+        };
+
+        var response = await owner.PostAsync("/api/udhaar-customers", form);
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (response.StatusCode != System.Net.HttpStatusCode.Created)
+        {
+            throw new InvalidOperationException($"Registering an udhaar customer failed: {(int)response.StatusCode} {body}");
+        }
+
+        using var json = System.Text.Json.JsonDocument.Parse(body);
+        return json.RootElement.GetProperty("data").GetProperty("id").GetInt64();
+    }
+
+    /// <summary>
+    /// Marks a customer an udhaar customer the way 0034's backfill left the shop's existing ones:
+    /// marked, no ID card yet — a valid state, flagged "ID card missing". For tests about credit
+    /// that are not about registering, including customers with no phone number.
+    /// </summary>
+    public async Task MarkUdhaarAsync(long customerId)
+    {
+        await using var connection = await _database.OpenAsync();
+        await connection.ExecuteAsync("UPDATE customers SET credit_allowed = TRUE WHERE id = @customerId;", new { customerId });
     }
 
     /// <summary>A supplier to buy from. Every purchase has to name one.</summary>
