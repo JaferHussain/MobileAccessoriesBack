@@ -21,6 +21,8 @@ public interface IBrandService
     Task DeactivateAsync(long id, CancellationToken cancellationToken = default);
 
     Task ReactivateAsync(long id, CancellationToken cancellationToken = default);
+
+    Task DeleteAsync(long id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -126,6 +128,25 @@ public sealed class BrandService : IBrandService
             ?? throw new NotFoundException("Brand", id);
 
         await _brands.SetActiveAsync(id, isActive: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Removes a brand for good — only one no product is filed under. One still in use is
+    /// refused; the owner retires it instead, so those products keep their label.
+    /// </summary>
+    public async Task DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var brand = await _brands.FindByIdAsync(id, cancellationToken)
+            ?? throw new NotFoundException("Brand", id);
+
+        var inUse = await _brands.ProductCountAsync(id, cancellationToken);
+
+        if (inUse > 0 || !await _brands.DeleteAsync(id, cancellationToken))
+        {
+            throw new BusinessRuleViolationException(
+                $"The brand '{brand.Name}' is used by {inUse} product(s), so it cannot be " +
+                "deleted. Retire it instead.");
+        }
     }
 
     private async Task<BrandDto> ToDtoAsync(

@@ -330,6 +330,51 @@ public sealed class ProductEndpointsTests
     }
 
     [Fact]
+    public async Task A_product_with_no_history_can_be_deleted_for_good()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var created = await admin.PostAsJsonAsync("/api/products", await NewProductAsync(Unique("Mistake")));
+        var id = (await created.Content.ReadFromJsonAsync<Envelope<ProductBody>>(Json))!.Data!.Id;
+
+        var deleted = await admin.DeleteAsync($"/api/products/{id}/permanent");
+        deleted.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Removed from the database, not merely hidden.
+        (await admin.GetAsync($"/api/products/{id}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task A_product_with_stock_history_cannot_be_deleted_only_retired()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var created = await admin.PostAsJsonAsync("/api/products", await NewProductAsync(Unique("Stocked")));
+        var id = (await created.Content.ReadFromJsonAsync<Envelope<ProductBody>>(Json))!.Data!.Id;
+
+        // Counted in, then counted out: nothing on the shelf, but two audited movements on record.
+        await admin.PostAsJsonAsync($"/api/products/{id}/adjust-stock", new { newQuantity = 3, note = "Recount" });
+        await admin.PostAsJsonAsync($"/api/products/{id}/adjust-stock", new { newQuantity = 0, note = "Breakage" });
+
+        var deleted = await admin.DeleteAsync($"/api/products/{id}/permanent");
+
+        // Its stock movements point at it, so deleting it would rewrite history (FR-002).
+        deleted.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await admin.GetAsync($"/api/products/{id}")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task A_product_with_stock_on_hand_cannot_be_deleted()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var created = await admin.PostAsJsonAsync("/api/products", await NewProductAsync(Unique("OnShelf")));
+        var id = (await created.Content.ReadFromJsonAsync<Envelope<ProductBody>>(Json))!.Data!.Id;
+
+        await _api.StockProductAsync(id, quantity: 3, costPrice: 100m, salePrice: 150m);
+
+        (await admin.DeleteAsync($"/api/products/{id}/permanent")).StatusCode
+            .Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
     public async Task Fetching_an_unknown_product_returns_not_found()
     {
         var admin = await ClientAsync(UserRole.Admin);

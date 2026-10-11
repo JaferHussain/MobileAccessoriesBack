@@ -3,6 +3,7 @@ using Dapper;
 using MoizPos.Application.Abstractions;
 using MoizPos.Domain.Entities;
 using MoizPos.Domain.Enums;
+using MySqlConnector;
 
 namespace MoizPos.Infrastructure.Repositories;
 
@@ -257,6 +258,23 @@ public sealed class ProductRepository : IProductRepository
         await connection.ExecuteAsync(
             "UPDATE products SET is_active = FALSE, updated_at_utc = UTC_TIMESTAMP(6) WHERE id = @id;",
             new { id });
+    }
+
+    public async Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync("DELETE FROM products WHERE id = @id;", new { id });
+            return true;
+        }
+        catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.RowIsReferenced2)
+        {
+            // An invoice line, purchase, return, stock movement or salesman's bag still points
+            // here. The RESTRICT key refused, so nothing was deleted.
+            return false;
+        }
     }
 
     public async Task SetImagePathAsync(

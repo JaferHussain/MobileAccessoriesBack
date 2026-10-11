@@ -213,4 +213,26 @@ public sealed class ProductsController : ControllerBase
 
         return NoContent();
     }
+
+    /// <summary>
+    /// Deletes a product for good — only one with no sales, purchase or stock history; anything
+    /// else is a 422 and should be retired instead. Its picture goes with it.
+    /// </summary>
+    [HttpDelete("{id:long}/permanent")]
+    [Authorize(Policy = Policies.AdminOnly)]
+    public async Task<IActionResult> Delete(
+        long id,
+        [FromServices] IImageStorageService images,
+        CancellationToken cancellationToken)
+    {
+        var imagePath = await _products.DeleteAsync(id, cancellationToken);
+
+        // A picture whose product is gone is unreachable: nothing reads it, nothing deletes it.
+        if (!string.IsNullOrWhiteSpace(imagePath))
+        {
+            images.DeleteProductImage(imagePath);
+        }
+
+        return NoContent();
+    }
 }

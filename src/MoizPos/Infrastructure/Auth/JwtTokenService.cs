@@ -32,6 +32,7 @@ public sealed class JwtOptions
     {
         if (string.IsNullOrWhiteSpace(Key) || Key.Length < MinimumKeyLength)
         {
+
             throw new InvalidOperationException(
                 $"Jwt:Key must be at least {MinimumKeyLength} characters. " +
                 "Set it with: dotnet user-secrets set \"Jwt:Key\" \"<random value>\"");

@@ -113,6 +113,12 @@ public interface IProductRepository
 
     Task DeactivateAsync(long id, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Removes the product for good. Returns false, deleting nothing, when any sale, purchase,
+    /// return, stock movement or salesman's bag references it — those foreign keys are RESTRICT.
+    /// </summary>
+    Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default);
+
     Task SetImagePathAsync(long id, string imagePath, CancellationToken cancellationToken = default);
 
     Task<bool> BarcodeExistsAsync(

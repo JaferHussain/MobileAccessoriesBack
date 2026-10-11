@@ -212,6 +212,85 @@ public sealed class CategoryAndBrandTests
     }
 
     [Fact]
+    public async Task An_unused_category_can_be_deleted_for_good()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+
+        var created = await admin.PostAsJsonAsync("/api/categories", new { name = Unique("Gone") });
+        var categoryId = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
+            .Data!.GetProperty("id").GetInt64();
+
+        var deleted = await admin.DeleteAsync($"/api/categories/{categoryId}/permanent");
+        deleted.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Removed from the database, not merely hidden.
+        (await admin.GetAsync($"/api/categories/{categoryId}")).StatusCode
+            .Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task A_category_in_use_cannot_be_deleted_only_retired()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+
+        var created = await admin.PostAsJsonAsync("/api/categories", new { name = Unique("Kept") });
+        var categoryId = (await created.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!
+            .Data!.GetProperty("id").GetInt64();
+
+        await admin.PostAsJsonAsync("/api/products", new
+        {
+            name = Unique("Prod"),
+            categoryId,
+            brandId = await _api.EnsureBrandAsync(Unique("KeptBrand")),
+            minStockThreshold = 1,
+        });
+
+        var deleted = await admin.DeleteAsync($"/api/categories/{categoryId}/permanent");
+
+        deleted.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await admin.GetAsync($"/api/categories/{categoryId}")).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task An_unused_brand_can_be_deleted_for_good_but_one_in_use_cannot()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+
+        var unused = await _api.EnsureBrandAsync(Unique("GoneBrand"));
+
+        (await admin.DeleteAsync($"/api/brands/{unused}/permanent")).StatusCode
+            .Should().Be(HttpStatusCode.NoContent);
+        (await admin.GetAsync($"/api/brands/{unused}")).StatusCode
+            .Should().Be(HttpStatusCode.NotFound);
+
+        var used = await _api.EnsureBrandAsync(Unique("UsedBrand"));
+
+        await admin.PostAsJsonAsync("/api/products", new
+        {
+            name = Unique("Prod"),
+            categoryId = await _api.EnsureCategoryAsync(Unique("UsedCat")),
+            brandId = used,
+            minStockThreshold = 1,
+        });
+
+        (await admin.DeleteAsync($"/api/brands/{used}/permanent")).StatusCode
+            .Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await admin.GetAsync($"/api/brands/{used}")).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Staff_cannot_delete_a_category()
+    {
+        var staff = await ClientAsync(UserRole.Staff);
+        var categoryId = await _api.EnsureCategoryAsync(Unique("StaffCat"));
+
+        (await staff.DeleteAsync($"/api/categories/{categoryId}/permanent")).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task A_product_pointed_at_a_category_that_does_not_exist_is_refused()
     {
         var admin = await ClientAsync(UserRole.Admin);

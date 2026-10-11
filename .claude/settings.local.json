@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.specify/scripts/powershell/setup-plan.ps1 -Json)"
+    ]
+  }
+}

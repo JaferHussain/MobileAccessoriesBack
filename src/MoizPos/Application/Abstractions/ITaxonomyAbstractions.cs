@@ -35,6 +35,12 @@ public interface ICategoryRepository
     /// removed — deleting it would orphan stock the shop actually holds.
     /// </summary>
     Task<int> ProductCountAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes the row for good. Returns false, deleting nothing, when anything still references
+    /// it — the foreign keys are RESTRICT, so history can never be deleted out from under itself.
+    /// </summary>
+    Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Reads and writes product brands. See <see cref="ICategoryRepository"/>.</summary>
@@ -61,4 +67,7 @@ public interface IBrandRepository
         CancellationToken cancellationToken = default);
 
     Task<int> ProductCountAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <inheritdoc cref="ICategoryRepository.DeleteAsync"/>
+    Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default);
 }

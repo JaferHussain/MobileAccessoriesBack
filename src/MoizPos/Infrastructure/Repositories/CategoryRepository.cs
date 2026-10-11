@@ -2,6 +2,7 @@ using System.Text;
 using Dapper;
 using MoizPos.Application.Abstractions;
 using MoizPos.Domain.Entities;
+using MySqlConnector;
 
 namespace MoizPos.Infrastructure.Repositories;
 
@@ -133,5 +134,21 @@ public sealed class CategoryRepository : ICategoryRepository
         return await connection.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM products WHERE category_id = @id;",
             new { id });
+    }
+
+    public async Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync("DELETE FROM categories WHERE id = @id;", new { id });
+            return true;
+        }
+        catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.RowIsReferenced2)
+        {
+            // A product still points here. The RESTRICT key refused, so nothing was deleted.
+            return false;
+        }
     }
 }

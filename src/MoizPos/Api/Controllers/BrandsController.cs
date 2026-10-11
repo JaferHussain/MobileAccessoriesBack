@@ -87,6 +87,16 @@ public sealed class BrandsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Deletes a brand for good — only one no product uses; otherwise a 422.</summary>
+    [HttpDelete("{id:long}/permanent")]
+    [Authorize(Policy = Policies.AdminOnly)]
+    public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken)
+    {
+        await _brands.DeleteAsync(id, cancellationToken);
+
+        return NoContent();
+    }
+
     [HttpPost("{id:long}/reactivate")]
     [Authorize(Policy = Policies.AdminOnly)]
     public async Task<IActionResult> Reactivate(long id, CancellationToken cancellationToken)

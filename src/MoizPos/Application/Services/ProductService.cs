@@ -36,6 +36,12 @@ public interface IProductService
     Task UpdateAsync(long id, ProductUpsertRequest request, CancellationToken cancellationToken = default);
 
     Task DeactivateAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a product that was never bought, sold or moved. Returns its picture's path, if
+    /// it had one, so the caller can delete the file too.
+    /// </summary>
+    Task<string?> DeleteAsync(long id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -218,6 +224,30 @@ public sealed class ProductService : IProductService
 
         // Deactivated, never deleted: historical invoices reference this row (FR-002).
         await _products.DeactivateAsync(id, cancellationToken);
+    }
+
+    public async Task<string?> DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var product = await _products.FindByIdAsync(id, cancellationToken: cancellationToken)
+            ?? throw new NotFoundException("Product", id);
+
+        if (product.QuantityOnHand != 0)
+        {
+            throw new BusinessRuleViolationException(
+                $"'{product.Name}' still has {product.QuantityOnHand} in stock, so it cannot be deleted. " +
+                "Retire it instead.");
+        }
+
+        // Only a product with no history goes. Anything an invoice, purchase, return or stock
+        // movement points at is refused by the RESTRICT keys, and is retired instead (FR-002).
+        if (!await _products.DeleteAsync(id, cancellationToken))
+        {
+            throw new BusinessRuleViolationException(
+                $"'{product.Name}' has sales, purchase or stock history, so it cannot be deleted. " +
+                "Retire it instead — past invoices keep it.");
+        }
+
+        return product.ImagePath;
     }
 
     /// <summary>Projects a row to the shape this role is permitted to see.</summary>

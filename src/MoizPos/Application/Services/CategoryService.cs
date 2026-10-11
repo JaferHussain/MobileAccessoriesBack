@@ -21,6 +21,8 @@ public interface ICategoryService
     Task DeactivateAsync(long id, CancellationToken cancellationToken = default);
 
     Task ReactivateAsync(long id, CancellationToken cancellationToken = default);
+
+    Task DeleteAsync(long id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -114,6 +116,25 @@ public sealed class CategoryService : ICategoryService
             ?? throw new NotFoundException("Category", id);
 
         await _categories.SetActiveAsync(id, isActive: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Removes a category for good — only one no product is filed under. One still in use is
+    /// refused; the owner retires it instead, so those products keep their label.
+    /// </summary>
+    public async Task DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var category = await _categories.FindByIdAsync(id, cancellationToken)
+            ?? throw new NotFoundException("Category", id);
+
+        var inUse = await _categories.ProductCountAsync(id, cancellationToken);
+
+        if (inUse > 0 || !await _categories.DeleteAsync(id, cancellationToken))
+        {
+            throw new BusinessRuleViolationException(
+                $"The category '{category.Name}' is used by {inUse} product(s), so it cannot be " +
+                "deleted. Retire it instead.");
+        }
     }
 
     private async Task<CategoryDto> ToDtoAsync(

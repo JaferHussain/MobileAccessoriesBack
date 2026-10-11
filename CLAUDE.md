@@ -433,8 +433,12 @@ into foreign keys, migrating every distinct value that existed rather than disca
 - Read is open to any signed-in user (the product list shows both); every write is `AdminOnly`.
 - Names are unique, and the collation is case- and accent-insensitive, so "Cables" and "cables"
   collide by design — that is the point of the module.
-- Nothing is hard-deleted. The foreign keys are `ON DELETE RESTRICT` and the service retires a
-  row instead: products keep their label, and the retired row simply stops being offered.
+- **Retire** (`DELETE /{id}`) hides a row; products keep their label, and the retired row simply
+  stops being offered. **Delete** (`DELETE /{id}/permanent`, also on `/api/products`) removes the
+  row for good — but only one nothing references. A category or brand any product uses, or a
+  product with stock or any sale/purchase/return/stock-movement history, is a 422 telling the
+  owner to retire it instead. The foreign keys are `ON DELETE RESTRICT`, and the repository's
+  `DeleteAsync` returns false on MySQL error 1451 rather than letting it surface as a 500.
 - `ProductRow.Category` and `.Brand` are the joined **names**, for display; `CategoryId` and
   `BrandId` are what a write accepts.
 - **Local goods are an ordinary brand, not a flag.** The owner handles them by creating a brand
