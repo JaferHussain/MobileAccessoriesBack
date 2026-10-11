@@ -106,8 +106,25 @@ public sealed record DiscountedSaleRow
     public decimal Discount { get; init; }
 }
 
+/// <summary>
+/// One way a person's sales were paid in the period: how many bills, and what came in at the sale.
+/// "Partial" (a part paid in cash) is folded into Cash by the service — the money is notes either way.
+/// </summary>
+public sealed record SalesByMethodRow
+{
+    public string Method { get; init; } = string.Empty;
+
+    public int Bills { get; init; }
+
+    /// <summary>Money taken at the sale by this method — a part payment counts only what was paid.</summary>
+    public decimal Received { get; init; }
+}
+
 public interface ITeamRepository
 {
+    Task<IReadOnlyList<SalesByMethodRow>> SalesByMethodAsync(
+        long userId, DateTime startUtc, DateTime endUtc, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<TeamMemberRow>> MembersAsync(
         DateTime startUtc, DateTime endUtc, CancellationToken cancellationToken = default);
 

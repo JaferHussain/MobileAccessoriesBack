@@ -148,6 +148,104 @@ public sealed class UdhaarCustomerTests
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
+    // ================================================================
+    //  Editing
+    // ================================================================
+
+    private static MultipartFormDataContent Edit(string? name, string? mobile, bool newFront = false)
+    {
+        var form = new MultipartFormDataContent();
+
+        if (name is not null)
+        {
+            form.Add(new StringContent(name), "name");
+        }
+
+        if (mobile is not null)
+        {
+            form.Add(new StringContent(mobile), "mobileNumber");
+        }
+
+        if (newFront)
+        {
+            form.Add(ApiFactory.Photo(), "idCardFront", "front.jpg");
+        }
+
+        return form;
+    }
+
+    private async Task<(string? Front, string? Back)> CardPathsAsync(long customerId)
+    {
+        await using var connection = await _api.OpenDatabaseAsync();
+
+        return await connection.QuerySingleAsync<(string?, string?)>(
+            "SELECT id_card_front_path, id_card_back_path FROM customers WHERE id = @customerId;", new { customerId });
+    }
+
+    [Fact]
+    public async Task The_owner_edits_an_udhaar_customers_name_and_phone_and_keeps_the_card_on_file()
+    {
+        var owner = await SignedInAsync(UserRole.Admin);
+        var id = await ApiFactory.RegisterUdhaarCustomerAsync(owner, "Rehman Mobile");
+        var before = await CardPathsAsync(id);
+
+        var response = await owner.PutAsync($"/api/udhaar-customers/{id}", Edit("Rehman Mobiles & Co", "03219876543"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var status = await StatusAsync(owner, id);
+        status.GetProperty("name").GetString().Should().Be("Rehman Mobiles & Co");
+        status.GetProperty("mobileNumber").GetString().Should().Be("03219876543");
+        status.GetProperty("isUdhaarCustomer").GetBoolean().Should().BeTrue("editing details never takes the mark away");
+        (await CardPathsAsync(id)).Should().Be(before, "no photo was sent, so both sides stay as they were");
+    }
+
+    [Fact]
+    public async Task A_new_photo_replaces_that_side_of_the_card_and_leaves_the_other()
+    {
+        var owner = await SignedInAsync(UserRole.Admin);
+        var id = await ApiFactory.RegisterUdhaarCustomerAsync(owner);
+        var before = await CardPathsAsync(id);
+
+        (await owner.PutAsync($"/api/udhaar-customers/{id}", Edit("Bilal Traders", "03001234567", newFront: true)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var after = await CardPathsAsync(id);
+        after.Front.Should().NotBe(before.Front);
+        after.Back.Should().Be(before.Back);
+        (await owner.GetAsync($"/api/udhaar-customers/{id}/id-card/front")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData(null, "03001234567")]
+    [InlineData("Bilal", null)]
+    [InlineData("  ", "03001234567")]
+    public async Task An_edit_needs_a_name_and_a_phone(string? name, string? mobile)
+    {
+        var owner = await SignedInAsync(UserRole.Admin);
+        var id = await ApiFactory.RegisterUdhaarCustomerAsync(owner, "Kept As Is");
+
+        (await owner.PutAsync($"/api/udhaar-customers/{id}", Edit(name, mobile)))
+            .StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        (await StatusAsync(owner, id)).GetProperty("name").GetString().Should().Be("Kept As Is");
+    }
+
+    [Fact]
+    public async Task Only_a_registered_udhaar_customer_is_edited_here_and_only_by_the_owner()
+    {
+        var owner = await SignedInAsync(UserRole.Admin);
+        var plain = await PlainCustomerAsync();
+
+        (await owner.PutAsync($"/api/udhaar-customers/{plain}", Edit("Someone", "03001234567")))
+            .StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var id = await ApiFactory.RegisterUdhaarCustomerAsync(owner);
+        var staff = await SignedInAsync(UserRole.Staff);
+
+        (await staff.PutAsync($"/api/udhaar-customers/{id}", Edit("Changed", "03001234567")))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     [Fact]
     public async Task An_existing_customer_is_made_an_udhaar_customer_from_their_ledger()
     {

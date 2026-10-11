@@ -55,6 +55,9 @@ public sealed record InvoiceSnapshot
     public decimal AmountRemaining { get; init; }
 
     public decimal NetAmount { get; init; }
+
+    /// <summary>Who made the sale — a field salesman may take back only his own.</summary>
+    public long SoldByUserId { get; init; }
 }
 
 /// <summary>A purchase being returned against, locked for update.</summary>
@@ -119,7 +122,10 @@ public interface IReturnWriteRepository
         long userId,
         DateTime nowUtc,
         bool inField,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? refundAccountNumber = null,
+        string? refundTransactionId = null,
+        long? refundShopAccountId = null);
 
     Task InsertSaleReturnItemsAsync(
         IUnitOfWork unitOfWork,
@@ -180,6 +186,14 @@ public sealed record SaleReturnRow
 
     public string InvoiceNumber { get; init; } = string.Empty;
 
+    /// <summary>Who brought the goods back. Null for a walk-in sale, which stores no customer.</summary>
+    public long? CustomerId { get; init; }
+
+    public string? CustomerName { get; init; }
+
+    /// <summary>"Retail" or "Wholesale" — read from the invoice the goods were sold on.</summary>
+    public string SaleType { get; init; } = "Retail";
+
     public string ProductName { get; init; } = string.Empty;
 
     public int Quantity { get; init; }
@@ -199,6 +213,14 @@ public sealed record SaleReturnRow
 
     /// <summary>How the refund was handed back. Null when nothing was refunded.</summary>
     public string? RefundMethod { get; init; }
+
+    /// <summary>The customer's account a transfer refund went to.</summary>
+    public string? RefundAccountNumber { get; init; }
+
+    /// <summary>The shop's own account the refund was paid from — "JazzCash 0300". Null for cash.</summary>
+    public string? RefundShopAccountName { get; init; }
+
+    public string? RefundTransactionId { get; init; }
 
     public bool HasRefundProof { get; init; }
 
@@ -238,6 +260,10 @@ public sealed record ReturnableLineRow
     public long InvoiceId { get; init; }
 
     public string InvoiceNumber { get; init; } = string.Empty;
+
+    public string? CustomerName { get; init; }
+
+    public string SaleType { get; init; } = "Retail";
 
     public long InvoiceItemId { get; init; }
 
@@ -282,6 +308,12 @@ public sealed record ReturnableSaleLine
 
     public string InvoiceNumber { get; init; } = string.Empty;
 
+    /// <summary>Who bought it. Null for a walk-in — the sale stored no customer.</summary>
+    public string? CustomerName { get; init; }
+
+    /// <summary>"Retail" or "Wholesale", from the invoice.</summary>
+    public string SaleType { get; init; } = "Retail";
+
     public long InvoiceItemId { get; init; }
 
     public string ProductName { get; init; } = string.Empty;
@@ -324,6 +356,8 @@ public sealed record ReturnableSaleLine
         {
             InvoiceId = row.InvoiceId,
             InvoiceNumber = row.InvoiceNumber,
+            CustomerName = row.CustomerName,
+            SaleType = row.SaleType,
             InvoiceItemId = row.InvoiceItemId,
             ProductName = row.ProductName,
             QuantitySold = row.Quantity,
@@ -346,11 +380,23 @@ public interface IReturnReadRepository
     /// Recent, still-returnable sale lines whose product name matches. Powers "Return item":
     /// search by name instead of hunting for the invoice number on a receipt.
     /// </summary>
+    /// <param name="soldByUserId">When given, only that person's sales — a field salesman's own.</param>
     Task<IReadOnlyList<ReturnableLineRow>> FindReturnableLinesAsync(
-        string search, int limit, CancellationToken cancellationToken = default);
+        string search, int limit, CancellationToken cancellationToken = default, long? soldByUserId = null);
 
+    /// <summary>
+    /// Sale returns, newest first. <paramref name="saleType"/> narrows to returns of retail or of
+    /// wholesale sales; <paramref name="search"/> matches the customer's name or mobile number,
+    /// the invoice number or the product.
+    /// </summary>
     Task<(IReadOnlyList<SaleReturnRow> Items, int TotalItems)> SearchSaleReturnsAsync(
-        int page, int pageSize, CancellationToken cancellationToken = default);
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default,
+        SaleType? saleType = null,
+        string? search = null,
+        long? customerId = null,
+        long? soldByUserId = null);
 
     /// <summary>Scoped to one supplier when given — the everyday case, since a return is made to
     /// whichever supplier the goods came from.</summary>

@@ -206,6 +206,23 @@ public sealed record UserSalesRow
     public decimal DiscountGiven { get; init; }
 }
 
+/// <summary>
+/// What is on the shelf to sell right now. "In the shop" is what the shop OWNS less what its field
+/// salesmen are carrying (<c>SalesmanStockRules.AtShop</c>), over active products that have a price —
+/// an unpriced product cannot be sold whatever its count.
+/// </summary>
+public sealed record ShopStockSummary
+{
+    /// <summary>Units on the shelf, ready to sell.</summary>
+    public long UnitsInShop { get; init; }
+
+    /// <summary>How many different products have at least one unit on the shelf.</summary>
+    public long ProductsInStock { get; init; }
+
+    /// <summary>Units out in the market with salesmen — still the shop's, not on the shelf.</summary>
+    public long UnitsWithSalesmen { get; init; }
+}
+
 public sealed record SaleTypeTotalsRow
 {
     /// <summary>"Retail" or "Wholesale".</summary>
@@ -216,6 +233,23 @@ public sealed record SaleTypeTotalsRow
     public int InvoiceCount { get; init; }
 
     public int ItemsSold { get; init; }
+}
+
+/// <summary>
+/// What came back in the period, for one kind of sale. Both rows are always returned, zero
+/// included, like the sales split beside it.
+/// </summary>
+public sealed record SaleTypeReturnsRow
+{
+    /// <summary>"Retail" or "Wholesale" — read from the invoice the goods were sold on.</summary>
+    public string SaleType { get; init; } = string.Empty;
+
+    public int ReturnCount { get; init; }
+
+    public int ItemsReturned { get; init; }
+
+    /// <summary>What was given back — already taken off the sales figure beside it.</summary>
+    public decimal AmountReturned { get; init; }
 }
 
 /// <summary>
@@ -304,6 +338,9 @@ public interface IReportRepository
 
     Task<int> ItemsSoldAsync(DateRangeUtc range, CancellationToken cancellationToken = default);
 
+    /// <summary>What the shop can sell right now — a snapshot, not a period.</summary>
+    Task<ShopStockSummary> ShopStockAsync(CancellationToken cancellationToken = default);
+
     Task<decimal> TotalReceivablesAsync(CancellationToken cancellationToken = default);
 
     Task<decimal> TotalPayablesAsync(CancellationToken cancellationToken = default);
@@ -320,6 +357,10 @@ public interface IReportRepository
         DateRangeUtc range, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<SaleTypeTotalsRow>> SalesBySaleTypeAsync(
+        DateRangeUtc range, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns in the period, split by the sale type of the invoice they came back against.</summary>
+    Task<IReadOnlyList<SaleTypeReturnsRow>> ReturnsBySaleTypeAsync(
         DateRangeUtc range, CancellationToken cancellationToken = default);
 
     /// <summary>

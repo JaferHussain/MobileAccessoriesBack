@@ -62,6 +62,37 @@ public sealed class SalesmanStockRepository : ISalesmanStockRepository
         return rows.ToDictionary(row => row.ProductId, row => row.Quantity);
     }
 
+    public async Task<IReadOnlyDictionary<long, decimal>> CommissionsAsync(
+        IUnitOfWork unitOfWork, long userId, IReadOnlyList<long> productIds, CancellationToken cancellationToken = default)
+    {
+        if (productIds.Count == 0)
+        {
+            return new Dictionary<long, decimal>();
+        }
+
+        var rows = await unitOfWork.Connection.QueryAsync<(long ProductId, decimal PerUnit)>(
+            """
+            SELECT product_id, commission_per_unit
+            FROM salesman_stock
+            WHERE user_id = @userId AND product_id IN @productIds
+            ORDER BY product_id
+            FOR UPDATE;
+            """,
+            new { userId, productIds },
+            unitOfWork.Transaction);
+
+        return rows.ToDictionary(row => row.ProductId, row => row.PerUnit);
+    }
+
+    public async Task SetCommissionAsync(
+        IUnitOfWork unitOfWork, long userId, long productId, decimal perUnit, CancellationToken cancellationToken = default)
+    {
+        await unitOfWork.Connection.ExecuteAsync(
+            "UPDATE salesman_stock SET commission_per_unit = @perUnit WHERE user_id = @userId AND product_id = @productId;",
+            new { userId, productId, perUnit },
+            unitOfWork.Transaction);
+    }
+
     public async Task MoveAsync(
         IUnitOfWork unitOfWork, long userId, long productId, int change, int resulting, SalesmanStockReason reason,
         long? referenceId, string? note, long recordedByUserId, DateTime nowUtc, CancellationToken cancellationToken = default)
@@ -130,7 +161,8 @@ public sealed class SalesmanStockRepository : ISalesmanStockRepository
 
         var rows = await connection.QueryAsync<SalesmanHoldingRow>(
             """
-            SELECT s.product_id AS ProductId, p.name AS ProductName, s.quantity AS Quantity
+            SELECT s.product_id AS ProductId, p.name AS ProductName, s.quantity AS Quantity,
+                   s.commission_per_unit AS CommissionPerUnit
             FROM salesman_stock s
             JOIN products p ON p.id = s.product_id
             WHERE s.user_id = @userId AND s.quantity > 0

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MoizPos.Api.Authorization;
 using MoizPos.Application.Abstractions;
+using MoizPos.Application.Calculations;
 using MoizPos.Application.Contracts.Common;
 using MoizPos.Application.Services;
 using MoizPos.Domain.Entities;
@@ -42,7 +43,8 @@ public sealed class CreatePurchaseValidator : AbstractValidator<CreatePurchaseRe
         RuleFor(x => x.ProductId).GreaterThan(0).WithMessage("A product is required.");
 
         RuleFor(x => x.UnitCost)
-            .GreaterThan(0).WithMessage("Purchase cost must be greater than zero.");
+            .GreaterThan(0).WithMessage("Purchase cost must be greater than zero.")
+            .Must(WholeRupees.IsWhole).WithMessage(WholeRupees.Message);
 
         RuleFor(x => x.Quantity)
             .GreaterThan(0).WithMessage("Quantity must be greater than zero.");
@@ -54,9 +56,15 @@ public sealed class CreatePurchaseValidator : AbstractValidator<CreatePurchaseRe
             .GreaterThanOrEqualTo(0).When(x => x.NewRetailPrice.HasValue)
             .WithMessage("Retail price cannot be negative.");
 
+        RuleFor(x => x.NewRetailPrice)
+            .Must(WholeRupees.IsWhole).WithMessage(WholeRupees.Message);
+
         RuleFor(x => x.NewWholesalePrice)
             .GreaterThanOrEqualTo(0).When(x => x.NewWholesalePrice.HasValue)
             .WithMessage("Wholesale price cannot be negative.");
+
+        RuleFor(x => x.NewWholesalePrice)
+            .Must(WholeRupees.IsWhole).WithMessage(WholeRupees.Message);
     }
 }
 

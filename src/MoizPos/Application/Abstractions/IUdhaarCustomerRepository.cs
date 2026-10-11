@@ -47,6 +47,15 @@ public interface IUdhaarCustomerRepository
     Task RegisterAsync(
         long customerId, string? mobileNumber, string? frontPath, string? backPath, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Corrects a registered udhaar customer's name and phone, and replaces a side of the ID card
+    /// when a new photo is given (null leaves the stored one). Never touches the udhaar mark or
+    /// what they owe.
+    /// </summary>
+    Task UpdateAsync(
+        long customerId, string name, string mobileNumber, string? frontPath, string? backPath,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Takes the mark away. The ID card photos are kept — they are evidence of who was given credit.</summary>
     Task RemoveAsync(long customerId, CancellationToken cancellationToken = default);
 }

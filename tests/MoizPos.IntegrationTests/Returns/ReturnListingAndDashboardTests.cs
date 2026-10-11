@@ -115,6 +115,228 @@ public sealed class ReturnListingAndDashboardTests
         row.GetProperty("reason").GetString().Should().Be("Wrong colour");
     }
 
+    /// <summary>A paid walk-in sale of one unit, and the id of its line — something to return.</summary>
+    private async Task<(long InvoiceId, long ItemId)> PaidSaleAsync(HttpClient admin)
+    {
+        var productId = await CreateProductAsync(admin, "Refund");
+        var invoice = (await (await admin.PostAsJsonAsync("/api/invoices", new
+        {
+            amountPaid = 1100m,
+            paymentMethod = "Cash",
+            items = new[] { new { productId, quantity = 1, unitSalePrice = 1100m, lineDiscount = 0m } },
+        })).Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!;
+        var invoiceId = invoice.GetProperty("invoiceId").GetInt64();
+
+        var items = (await (await admin.GetAsync($"/api/invoices/{invoiceId}")).Content
+            .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items");
+
+        return (invoiceId, items[0].GetProperty("id").GetInt64());
+    }
+
+    [Fact]
+    public async Task A_return_names_its_sale_type_and_a_walk_in_has_no_customer_and_the_filter_separates_them()
+    {
+        // Who brought it back, and was it a retail or a wholesale sale: read from the invoice, not
+        // stored twice. A walk-in sale stores no customer, so the name is null — not an invented label.
+        var admin = await ClientAsync(UserRole.Admin);
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        async Task<List<JsonElement>> RowsAsync(string query) =>
+            (await (await admin.GetAsync($"/api/sale-returns?pageSize=200{query}")).Content
+                .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items")
+            .EnumerateArray().ToList();
+
+        var row = (await RowsAsync("")).Single(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+
+        row.GetProperty("saleType").GetString().Should().Be("Retail");
+        row.GetProperty("customerName").ValueKind.Should().Be(JsonValueKind.Null);
+
+        (await RowsAsync("&saleType=Retail")).Should().Contain(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+        (await RowsAsync("&saleType=Wholesale")).Should().NotContain(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+    }
+
+    [Fact]
+    public async Task The_returns_report_counts_what_came_back_under_the_sale_type_it_was_sold_as()
+    {
+        // Both rows always appear; a retail return adds to Retail and leaves Wholesale where it was.
+        var admin = await ClientAsync(UserRole.Admin);
+        var today = DateTime.UtcNow.AddHours(5).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        async Task<(decimal Retail, decimal Wholesale)> AmountsAsync()
+        {
+            var rows = (await (await admin.GetAsync($"/api/reports/returns-by-type?from={today}&to={today}")).Content
+                .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.EnumerateArray().ToList();
+
+            decimal Of(string type) =>
+                rows.Single(r => r.GetProperty("saleType").GetString() == type).GetProperty("amountReturned").GetDecimal();
+
+            return (Of("Retail"), Of("Wholesale"));
+        }
+
+        var before = await AmountsAsync();
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var after = await AmountsAsync();
+
+        (after.Retail - before.Retail).Should().Be(1100m);
+        after.Wholesale.Should().Be(before.Wholesale);
+    }
+
+    /// <summary>One of the shop's own accounts, registered the way the owner does under Settings.</summary>
+    private static async Task<long> ShopAccountAsync(HttpClient admin, string type)
+    {
+        var response = await admin.PostAsJsonAsync("/api/shop-accounts", new
+        {
+            name = $"{type} {Guid.NewGuid():N}"[..20],
+            accountType = type,
+            accountNumber = "03001112223",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("id").GetInt64();
+    }
+
+    [Fact]
+    public async Task A_transfer_refund_names_the_shop_account_it_was_paid_from()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var jazzCash = await ShopAccountAsync(admin, "JazzCash");
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = "JazzCash",
+            refundShopAccountId = jazzCash,
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var row = (await (await admin.GetAsync("/api/sale-returns?pageSize=200")).Content
+                .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items").EnumerateArray()
+            .Single(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+
+        row.GetProperty("refundShopAccountName").GetString().Should().StartWith("JazzCash");
+    }
+
+    [Fact]
+    public async Task A_bank_account_refunds_by_raast_as_well_as_by_bank_transfer()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var bank = await ShopAccountAsync(admin, "Bank");
+
+        foreach (var method in new[] { "Raast", "BankTransfer" })
+        {
+            var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+            (await admin.PostAsJsonAsync("/api/sale-returns", new
+            {
+                invoiceId,
+                refundMethod = method,
+                refundShopAccountId = bank,
+                items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+            })).StatusCode.Should().Be(HttpStatusCode.Created, method);
+        }
+    }
+
+    [Theory]
+    [InlineData("Bank", "JazzCash")]
+    [InlineData("JazzCash", "Cash")]
+    public async Task A_refund_from_an_account_that_cannot_carry_it_is_refused_and_saves_nothing(string accountType, string method)
+    {
+        // A JazzCash refund cannot leave a bank account, and cash leaves no account at all.
+        var admin = await ClientAsync(UserRole.Admin);
+        var account = await ShopAccountAsync(admin, accountType);
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = method,
+            refundShopAccountId = account,
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var rows = (await (await admin.GetAsync("/api/sale-returns?pageSize=200")).Content
+            .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items").EnumerateArray();
+        rows.Should().NotContain(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+    }
+
+    [Fact]
+    public async Task Staff_see_the_shops_active_accounts_to_refund_from_but_cannot_manage_them()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var account = await ShopAccountAsync(admin, "EasyPaisa");
+        var staff = await ClientAsync(UserRole.Staff);
+
+        var choices = await staff.GetAsync("/api/shop-accounts/choices");
+        choices.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await choices.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.EnumerateArray()
+            .Should().Contain(a => a.GetProperty("id").GetInt64() == account);
+
+        (await staff.GetAsync("/api/shop-accounts")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await staff.PostAsJsonAsync("/api/shop-accounts", new { name = "Mine", accountType = "Bank" }))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task A_refund_by_transfer_records_the_account_it_went_to_and_its_transaction()
+    {
+        // The money went back by bank: which account, and the transaction, so it can be shown later.
+        var admin = await ClientAsync(UserRole.Admin);
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = "BankTransfer",
+            refundAccountNumber = " PK36 HABB 0012 ",
+            refundTransactionId = "FT-99812",
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var row = (await (await admin.GetAsync("/api/sale-returns?pageSize=200")).Content
+                .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items").EnumerateArray()
+            .Single(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+
+        row.GetProperty("refundAccountNumber").GetString().Should().Be("PK36 HABB 0012");
+        row.GetProperty("refundTransactionId").GetString().Should().Be("FT-99812");
+    }
+
+    [Fact]
+    public async Task A_cash_refund_carries_no_account_or_transaction_and_nothing_is_saved_if_it_tries()
+    {
+        // Cash came out of the drawer; an "account" on it would be evidence of nothing — the same
+        // rule a cash sale follows. Refused before the first write.
+        var admin = await ClientAsync(UserRole.Admin);
+        var (invoiceId, itemId) = await PaidSaleAsync(admin);
+
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId,
+            refundMethod = "Cash",
+            refundAccountNumber = "1234",
+            items = new[] { new { invoiceItemId = itemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var rows = (await (await admin.GetAsync("/api/sale-returns?pageSize=200")).Content
+            .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("items").EnumerateArray();
+        rows.Should().NotContain(r => r.GetProperty("invoiceId").GetInt64() == invoiceId);
+    }
+
     [Fact]
     public async Task A_purchase_return_scoped_to_its_supplier_does_not_leak_into_another_suppliers_list()
     {

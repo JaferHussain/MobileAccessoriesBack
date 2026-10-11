@@ -24,6 +24,10 @@ public sealed class UdhaarCustomersController : ControllerBase
     /// <summary>Two photos from a phone camera, each within the image limit, plus the form fields.</summary>
     private const long FormLimitBytes = 10 * 1024 * 1024;
 
+    /// <summary>The widths of customers.name and customers.mobile_number (0007).</summary>
+    private const int MaxNameLength = 150;
+    private const int MaxMobileLength = 20;
+
     private readonly IUdhaarCustomerRepository _udhaar;
     private readonly IImageStorageService _images;
 
@@ -117,6 +121,80 @@ public sealed class UdhaarCustomersController : ControllerBase
 
         await _udhaar.RegisterAsync(
             id, string.IsNullOrWhiteSpace(mobileNumber) ? null : mobileNumber.Trim(), front, back, cancellationToken);
+
+        // A replaced photo nothing points at any more would be unreachable forever.
+        if (front is not null && oldFront is not null)
+        {
+            _images.DeletePaymentProof(oldFront);
+        }
+
+        if (back is not null && oldBack is not null)
+        {
+            _images.DeletePaymentProof(oldBack);
+        }
+
+        return Ok(ApiResponse<UdhaarCustomerRow>.Ok(await FindAsync(id, cancellationToken)));
+    }
+
+    /// <summary>
+    /// Edits a registered udhaar customer: name and phone, both required, and either side of the ID
+    /// card replaced when a new photo is sent. The udhaar mark and what they owe are never touched
+    /// here. A replaced photo is deleted only once the new one is saved and recorded.
+    /// </summary>
+    [HttpPut("{id:long}")]
+    [RequestSizeLimit(FormLimitBytes)]
+    public async Task<IActionResult> Edit(
+        long id,
+        [FromForm] string? name,
+        [FromForm] string? mobileNumber,
+        IFormFile? idCardFront,
+        IFormFile? idCardBack,
+        CancellationToken cancellationToken)
+    {
+        var current = await FindAsync(id, cancellationToken);
+
+        if (!current.IsUdhaarCustomer)
+        {
+            throw new BusinessRuleViolationException(
+                $"{current.Name} is not an udhaar customer. Register them first, from their ledger.");
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new BusinessRuleViolationException("Enter the customer's name.");
+        }
+
+        if (string.IsNullOrWhiteSpace(mobileNumber))
+        {
+            throw new BusinessRuleViolationException("Enter the customer's phone number — it is how the udhaar is collected.");
+        }
+
+        if (name.Trim().Length > MaxNameLength || mobileNumber.Trim().Length > MaxMobileLength)
+        {
+            throw new BusinessRuleViolationException(
+                $"The name is at most {MaxNameLength} characters and the phone number at most {MaxMobileLength}.");
+        }
+
+        var (oldFront, oldBack) = await _udhaar.IdCardPathsAsync(id, cancellationToken);
+
+        var front = idCardFront is null ? null : await SaveAsync(idCardFront, cancellationToken);
+        string? back;
+
+        try
+        {
+            back = idCardBack is null ? null : await SaveAsync(idCardBack, cancellationToken);
+        }
+        catch
+        {
+            if (front is not null)
+            {
+                _images.DeletePaymentProof(front);
+            }
+
+            throw;
+        }
+
+        await _udhaar.UpdateAsync(id, name.Trim(), mobileNumber.Trim(), front, back, cancellationToken);
 
         // A replaced photo nothing points at any more would be unreachable forever.
         if (front is not null && oldFront is not null)

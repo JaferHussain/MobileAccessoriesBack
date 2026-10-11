@@ -27,6 +27,15 @@ public sealed record CreateSaleReturnRequest
 
     /// <summary>How the refund was handed back. Required when the return refunds money.</summary>
     public PaymentMethod? RefundMethod { get; init; }
+
+    /// <summary>The customer's account a transfer refund was sent to. Optional; refused for cash.</summary>
+    public string? RefundAccountNumber { get; init; }
+
+    /// <summary>The transfer's transaction ID. Optional; refused for cash.</summary>
+    public string? RefundTransactionId { get; init; }
+
+    /// <summary>The shop's own account a transfer refund was paid from. Optional; refused for cash.</summary>
+    public long? RefundShopAccountId { get; init; }
 }
 
 public sealed record CreatePurchaseReturnRequest
@@ -55,6 +64,10 @@ public sealed class CreateSaleReturnValidator : AbstractValidator<CreateSaleRetu
         });
 
         RuleFor(x => x.Reason).MaximumLength(255);
+
+        // The columns' widths (0040); whether one is ALLOWED is the service's call.
+        RuleFor(x => x.RefundAccountNumber).MaximumLength(50);
+        RuleFor(x => x.RefundTransactionId).MaximumLength(64);
     }
 }
 
@@ -95,6 +108,7 @@ public sealed class SaleReturnsController : ControllerBase
     [HttpGet("find")]
     public async Task<IActionResult> Find(
         [FromQuery] string search,
+        [FromServices] IUserRepository users,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(search) || search.Trim().Length < 2)
@@ -102,7 +116,9 @@ public sealed class SaleReturnsController : ControllerBase
             throw new BusinessRuleViolationException("Type at least 2 letters to search.");
         }
 
-        var rows = await _reads.FindReturnableLinesAsync(search, limit: 8, cancellationToken);
+        // A field salesman is offered only what he sold himself; everyone else, any sale.
+        var rows = await _reads.FindReturnableLinesAsync(
+            search, limit: 8, cancellationToken, await OwnSalesOnlyAsync(users, cancellationToken));
 
         // Mapped, not returned raw: the counter is sent the money already worked out, so the
         // screen and the return it records can never disagree.
@@ -117,23 +133,41 @@ public sealed class SaleReturnsController : ControllerBase
     public async Task<IActionResult> Search(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
+        [FromQuery] SaleType? saleType = null,
+        [FromQuery] string? search = null,
+        [FromQuery] long? customerId = null,
+        [FromServices] IUserRepository users = null!,
         CancellationToken cancellationToken = default)
     {
         var (normalizedPage, normalizedSize) = PagedResult<SaleReturnRow>.Normalize(page, pageSize);
 
         var (items, total) = await _reads.SearchSaleReturnsAsync(
-            normalizedPage, normalizedSize, cancellationToken);
+            normalizedPage, normalizedSize, cancellationToken, saleType, search, customerId,
+            await OwnSalesOnlyAsync(users, cancellationToken));
 
         return Ok(ApiResponse<PagedResult<SaleReturnRow>>.Ok(
             new PagedResult<SaleReturnRow>(items, normalizedPage, normalizedSize, total)));
     }
 
+    /// <summary>The caller's id when they are staff — they see only their own sales; null for the owner.</summary>
+    private Task<long?> OwnSalesOnlyAsync(IUserRepository users, CancellationToken cancellationToken) =>
+        Task.FromResult(CurrentUser.Role(User) == UserRole.Admin ? (long?)null : CurrentUser.Id(User));
+
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreateSaleReturnRequest request,
         [FromServices] IUserRepository users,
+        [FromServices] IShopAccountRepository shopAccounts,
         CancellationToken cancellationToken)
     {
+        // The account must exist, be in use, and carry this kind of transfer — the same check an
+        // expense and a supplier payment get. Whether an account is allowed at all (never for cash,
+        // never when nothing went back) is the service's call.
+        if (request.RefundShopAccountId is not null && request.RefundMethod is { } refundMethod)
+        {
+            await ShopAccountCheck.EnsureFitsAsync(shopAccounts, request.RefundShopAccountId, refundMethod, cancellationToken);
+        }
+
         var result = await _returns.RecordSaleReturnAsync(
             new RecordSaleReturnRequest
             {
@@ -143,6 +177,10 @@ public sealed class SaleReturnsController : ControllerBase
                     .Select(i => new SaleReturnLine { InvoiceItemId = i.InvoiceItemId, Quantity = i.Quantity })
                     .ToList(),
                 RefundMethod = request.RefundMethod,
+                RefundAccountNumber = request.RefundAccountNumber,
+                RefundTransactionId = request.RefundTransactionId,
+                RefundShopAccountId = request.RefundShopAccountId,
+                OwnSalesOnly = CurrentUser.Role(User) != UserRole.Admin,
                 InField = (await users.FindByIdAsync(CurrentUser.Id(User), cancellationToken))?.Job == StaffJob.FieldSales,
             },
             CurrentUser.Id(User),

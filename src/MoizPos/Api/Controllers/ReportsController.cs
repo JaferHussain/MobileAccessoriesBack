@@ -85,6 +85,18 @@ public sealed class ReportsController : ControllerBase
         return Ok(ApiResponse<IReadOnlyList<SaleTypeTotalsRow>>.Ok(rows));
     }
 
+    /// <summary>What came back in the period, split into returns of retail and of wholesale sales.</summary>
+    [HttpGet("returns-by-type")]
+    public async Task<IActionResult> ReturnsByType(
+        [FromQuery] DateOnly from,
+        [FromQuery] DateOnly to,
+        CancellationToken cancellationToken)
+    {
+        var rows = await _reporting.ReturnsByTypeAsync(from, to, cancellationToken);
+
+        return Ok(ApiResponse<IReadOnlyList<SaleTypeReturnsRow>>.Ok(rows));
+    }
+
     /// <summary>
     /// The individual sales behind one of those totals: invoice, time, customer, the salesman who
     /// sold it, and the amount. Omit <paramref name="saleType"/> to list both.

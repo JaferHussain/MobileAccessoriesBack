@@ -117,10 +117,10 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
             """
             INSERT INTO invoice_items
                 (invoice_id, product_id, product_name, quantity, unit_sale_price, base_unit_price,
-                 commission_rate, line_discount, unit_cost_price, line_total)
+                 commission_rate, fixed_commission_per_unit, line_discount, unit_cost_price, line_total)
             VALUES
                 (@invoiceId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @BaseUnitPrice,
-                 @CommissionRate, @LineDiscount, @UnitCostPrice, @LineTotal);
+                 @CommissionRate, @FixedCommissionPerUnit, @LineDiscount, @UnitCostPrice, @LineTotal);
             """,
             items.Select(item => new
             {
@@ -134,6 +134,7 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
                 item.LineTotal,
                 item.BaseUnitPrice,
                 item.CommissionRate,
+                item.FixedCommissionPerUnit,
             }),
             unitOfWork.Transaction);
     }
@@ -152,6 +153,15 @@ public sealed class InvoiceWriteRepository : IInvoiceWriteRepository
             WHERE id = @productId;
             """,
             new { productId, newQuantity, nowUtc },
+            unitOfWork.Transaction);
+    }
+
+    public async Task MarkCustomerWholesaleAsync(
+        IUnitOfWork unitOfWork, long customerId, CancellationToken cancellationToken = default)
+    {
+        await unitOfWork.Connection.ExecuteAsync(
+            "UPDATE customers SET sale_type = 'Wholesale' WHERE id = @customerId AND sale_type = 'Retail';",
+            new { customerId },
             unitOfWork.Transaction);
     }
 

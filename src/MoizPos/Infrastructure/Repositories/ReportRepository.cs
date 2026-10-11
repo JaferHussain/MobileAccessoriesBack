@@ -234,6 +234,34 @@ public sealed class ReportRepository : IReportRepository
         return rows.AsList();
     }
 
+    public async Task<IReadOnlyList<SaleTypeReturnsRow>> ReturnsBySaleTypeAsync(
+        DateRangeUtc range,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        // Dated by when the goods came BACK, not when they were sold. Both sides always appear.
+        var rows = await connection.QueryAsync<SaleTypeReturnsRow>(
+            """
+            SELECT t.sale_type AS SaleType,
+                   COUNT(DISTINCT sr.id)             AS ReturnCount,
+                   COALESCE(SUM(sri.quantity), 0)    AS ItemsReturned,
+                   COALESCE(SUM(sri.line_total), 0)  AS AmountReturned
+            FROM (SELECT 'Retail' AS sale_type UNION ALL SELECT 'Wholesale') t
+            LEFT JOIN invoices i ON i.sale_type = t.sale_type
+            LEFT JOIN sale_returns sr
+                   ON sr.invoice_id = i.id
+                  AND sr.return_date_utc >= @startUtc
+                  AND sr.return_date_utc <  @endUtc
+            LEFT JOIN sale_return_items sri ON sri.sale_return_id = sr.id
+            GROUP BY t.sale_type
+            ORDER BY t.sale_type;
+            """,
+            new { startUtc = range.StartUtc, endUtc = range.EndUtc });
+
+        return rows.AsList();
+    }
+
     public async Task<(IReadOnlyList<SaleListRow> Items, int TotalItems)> SalesListAsync(
         DateRangeUtc range,
         SaleType? saleType,
@@ -305,6 +333,27 @@ public sealed class ReportRepository : IReportRepository
             WHERE i.invoice_date_utc >= @startUtc AND i.invoice_date_utc < @endUtc;
             """,
             new { startUtc = range.StartUtc, endUtc = range.EndUtc });
+    }
+
+    public async Task<ShopStockSummary> ShopStockAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        // On the shelf = owned less what salesmen carry, never below zero. Summed per product
+        // first, so one product's bag never hides another's shelf.
+        return await connection.QuerySingleAsync<ShopStockSummary>(
+            """
+            SELECT
+                CAST(COALESCE(SUM(GREATEST(p.quantity_on_hand - COALESCE(h.held, 0), 0)), 0) AS SIGNED) AS UnitsInShop,
+                CAST(COALESCE(SUM(p.quantity_on_hand - COALESCE(h.held, 0) > 0), 0) AS SIGNED)          AS ProductsInStock,
+                CAST(COALESCE(SUM(COALESCE(h.held, 0)), 0) AS SIGNED)                                  AS UnitsWithSalesmen
+            FROM products p
+            LEFT JOIN (
+                SELECT product_id, SUM(quantity) AS held FROM salesman_stock GROUP BY product_id
+            ) h ON h.product_id = p.id
+            WHERE p.is_active = TRUE
+              AND p.retail_price > 0;
+            """);
     }
 
     public async Task<decimal> TotalReceivablesAsync(CancellationToken cancellationToken = default)

@@ -12,6 +12,9 @@ public sealed record SalesmanStockItemRequest
     public long ProductId { get; init; }
 
     public int Quantity { get; init; }
+
+    /// <summary>When issuing: the fixed commission on each unit he sells. Omitted keeps what was set.</summary>
+    public decimal? CommissionPerUnit { get; init; }
 }
 
 public sealed record SalesmanStockMoveRequest
@@ -30,6 +33,8 @@ public sealed class SalesmanStockMoveValidator : AbstractValidator<SalesmanStock
         {
             item.RuleFor(i => i.ProductId).GreaterThan(0);
             item.RuleFor(i => i.Quantity).GreaterThan(0).WithMessage("Each quantity must be more than zero.");
+            item.RuleFor(i => i.CommissionPerUnit).GreaterThanOrEqualTo(0).When(i => i.CommissionPerUnit.HasValue)
+                .WithMessage("A commission cannot be negative.");
         });
         RuleFor(x => x.Note).MaximumLength(255);
     }
@@ -76,5 +81,5 @@ public sealed class SalesmanStockController : ControllerBase
     }
 
     private static List<SalesmanStockLine> Lines(SalesmanStockMoveRequest request) =>
-        request.Items.Select(item => new SalesmanStockLine(item.ProductId, item.Quantity)).ToList();
+        request.Items.Select(item => new SalesmanStockLine(item.ProductId, item.Quantity, item.CommissionPerUnit)).ToList();
 }

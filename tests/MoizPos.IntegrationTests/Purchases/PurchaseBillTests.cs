@@ -121,6 +121,31 @@ public sealed class PurchaseBillTests
     }
 
     [Fact]
+    public async Task A_bill_with_paisa_in_any_price_is_refused_and_saves_nothing()
+    {
+        // Prices are whole rupees. One line with paisa refuses the whole bill, before the first write.
+        var owner = await SignedInAsync(UserRole.Admin);
+        var supplierId = await SupplierAsync();
+        var (charger, cable) = (await NewProductAsync(), await NewProductAsync());
+
+        var response = await RecordAsync(owner, new
+        {
+            supplierId,
+            billDate = ShopToday(),
+            lines = new object[]
+            {
+                new { productId = charger, quantity = 10, unitCost = 100m, newRetailPrice = 150m },
+                new { productId = cable, quantity = 5, unitCost = 200m, newRetailPrice = 299.50m },
+            },
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("whole rupees");
+        (await StockAsync(charger)).Should().Be(0);
+        (await PayableAsync(supplierId)).Should().Be(0m);
+    }
+
+    [Fact]
     public async Task Paying_the_whole_bill_at_once_stocks_first_then_pays_on_the_day_given()
     {
         var owner = await SignedInAsync(UserRole.Admin);

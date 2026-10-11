@@ -191,6 +191,7 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<ISalesmanCashRepository, SalesmanCashRepository>();
 builder.Services.AddScoped<ISalesmanCashService, SalesmanCashService>();
 builder.Services.AddScoped<ISalesmanStockRepository, SalesmanStockRepository>();
+builder.Services.AddScoped<IMyProductsRepository, MyProductsRepository>();
 builder.Services.AddScoped<ISalesmanStockService, SalesmanStockService>();
 builder.Services.AddScoped<IUdhaarCustomerRepository, UdhaarCustomerRepository>();
 builder.Services.AddScoped<IRecoveryRepository, RecoveryRepository>();

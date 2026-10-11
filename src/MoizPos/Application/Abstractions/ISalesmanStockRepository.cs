@@ -17,6 +17,9 @@ public sealed record SalesmanHoldingRow
     public string ProductName { get; init; } = string.Empty;
 
     public int Quantity { get; init; }
+
+    /// <summary>The fixed commission promised on each unit he sells. 0 = none.</summary>
+    public decimal CommissionPerUnit { get; init; }
 }
 
 /// <summary>One movement in or out of a salesman's bag.</summary>
@@ -61,6 +64,14 @@ public interface ISalesmanStockRepository
     /// <summary>How many of each product this one salesman carries. Missing ids: none.</summary>
     Task<IReadOnlyDictionary<long, int>> HoldingAsync(
         IUnitOfWork unitOfWork, long userId, IReadOnlyList<long> productIds, CancellationToken cancellationToken = default);
+
+    /// <summary>The fixed commission per unit he is promised on each product — read under the product locks a sale already holds.</summary>
+    Task<IReadOnlyDictionary<long, decimal>> CommissionsAsync(
+        IUnitOfWork unitOfWork, long userId, IReadOnlyList<long> productIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Sets the fixed commission per unit on a product he carries.</summary>
+    Task SetCommissionAsync(
+        IUnitOfWork unitOfWork, long userId, long productId, decimal perUnit, CancellationToken cancellationToken = default);
 
     /// <summary>Sets what he carries of one product and records the movement that got it there.</summary>
     Task MoveAsync(

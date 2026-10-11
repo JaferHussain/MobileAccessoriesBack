@@ -83,6 +83,44 @@ public sealed class CreditSaleRoleTests
             },
         };
 
+    [Fact]
+    public async Task An_udhaar_customers_part_paid_by_jazzcash_is_kept_under_jazzcash_and_out_of_the_drawer()
+    {
+        // The counter asks an udhaar customer "pay part now, or full udhaar?", then how the part was
+        // paid. A JazzCash part is saved under JazzCash: the rest is owed, and day close never
+        // counts it as cash. A cash part (Partial) is counted.
+        var owner = await ClientAsync(UserRole.Admin);
+        var productId = await CreateProductAsync();
+        var customerId = await CreateCustomerAsync();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        async Task<decimal> CashSalesAsync() =>
+            (await (await owner.GetAsync($"/api/day-closings/preview?date={today}&openingFloat=0")).Content
+                .ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!.GetProperty("cashSales").GetDecimal();
+
+        var before = await CashSalesAsync();
+
+        var jazz = await owner.PostAsJsonAsync("/api/invoices", new
+        {
+            customerId,
+            amountPaid = 2000m,
+            paymentMethod = "JazzCash",
+            paymentAccountNumber = "03001234567",
+            paymentTransactionId = "JC-7781",
+            items = new[] { new { productId, quantity = 1, unitSalePrice = 5000m, lineDiscount = 0m } },
+        });
+
+        jazz.StatusCode.Should().Be(HttpStatusCode.Created, await jazz.Content.ReadAsStringAsync());
+        var sale = (await jazz.Content.ReadFromJsonAsync<Envelope<JsonElement>>(Json))!.Data!;
+        sale.GetProperty("amountPaid").GetDecimal().Should().Be(2000m);
+        sale.GetProperty("amountRemaining").GetDecimal().Should().Be(3000m);
+        (await CashSalesAsync()).Should().Be(before, "a JazzCash part never went into the drawer");
+
+        (await owner.PostAsJsonAsync("/api/invoices", Sale(productId, customerId, 5000m, amountPaid: 1000m)))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+        (await CashSalesAsync()).Should().Be(before + 1000m, "a part paid in cash is in the drawer");
+    }
+
     // ---------------------------------------------------------------- the rule
 
     [Fact]

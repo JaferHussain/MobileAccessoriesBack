@@ -1,5 +1,6 @@
 using System.Globalization;
 using MoizPos.Application.Abstractions;
+using MoizPos.Application.Calculations;
 using MoizPos.Application.Time;
 using MoizPos.Domain.Enums;
 using MoizPos.Domain.Errors;
@@ -271,6 +272,14 @@ public sealed class PurchaseBillService : IPurchaseBillService
         if (lines.Any(line => line.NewRetailPrice is < 0m || line.NewWholesalePrice is < 0m))
         {
             throw new BusinessRuleViolationException("A selling price cannot be negative.");
+        }
+
+        // Before the first write, like every check here: one line with paisa saves nothing.
+        if (lines.Any(line => !WholeRupees.IsWhole(line.UnitCost)
+                              || !WholeRupees.IsWhole(line.NewRetailPrice)
+                              || !WholeRupees.IsWhole(line.NewWholesalePrice)))
+        {
+            throw new BusinessRuleViolationException(WholeRupees.Message);
         }
     }
 

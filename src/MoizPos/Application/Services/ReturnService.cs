@@ -30,8 +30,24 @@ public sealed record RecordSaleReturnRequest
     /// </summary>
     public PaymentMethod? RefundMethod { get; init; }
 
+    /// <summary>The customer's account a transfer refund was sent to. Refused on a cash refund.</summary>
+    public string? RefundAccountNumber { get; init; }
+
+    /// <summary>The transfer's transaction ID. Refused on a cash refund.</summary>
+    public string? RefundTransactionId { get; init; }
+
+    /// <summary>
+    /// Which of the shop's own accounts a transfer refund was paid FROM. The controller checks it
+    /// fits the method (ShopAccountCheck); stored only when money actually went back by transfer.
+    /// </summary>
+    public long? RefundShopAccountId { get; init; }
+
     /// <summary>Taken back in the market by a field salesman: a cash refund came out of his pocket, not the drawer.</summary>
     public bool InField { get; init; }
+
+    /// <summary>Staff — the counter shopkeeper and the field salesman — take back only what they
+    /// sold themselves. Only the owner takes back anyone's sale.</summary>
+    public bool OwnSalesOnly { get; init; }
 }
 
 /// <summary>One product's stock effect from a return — what the confirmation popup names.</summary>
@@ -141,6 +157,14 @@ public sealed class ReturnService : IReturnService
         var invoice = await _returns.LockInvoiceAsync(uow, request.InvoiceId, cancellationToken)
             ?? throw new NotFoundException("Invoice", request.InvoiceId);
 
+        // Staff take back only their own sales — another person's sale is theirs to answer for,
+        // and it never appears in their search. Checked before the first write.
+        if (request.OwnSalesOnly && invoice.SoldByUserId != userId)
+        {
+            throw new BusinessRuleViolationException(
+                $"{invoice.InvoiceNumber} was sold by someone else. You can take back only your own sales.");
+        }
+
         var itemIds = request.Items.Select(i => i.InvoiceItemId).OrderBy(id => id).ToList();
         var lines = await _returns.LockInvoiceItemsAsync(uow, request.InvoiceId, itemIds, cancellationToken);
         var byId = lines.ToDictionary(l => l.Id);
@@ -210,11 +234,32 @@ public sealed class ReturnService : IReturnService
         // balance change behind — the same discipline as every other refusal in this service.
         var refundMethod = RefundMethodFor(refundDue, request.RefundMethod);
 
+        // Where a transfer refund went, and its reference — the same two facts a transfer sale
+        // records. Cash came out of the drawer and carries neither: refused, before the first
+        // write, exactly as a cash sale is (a "reference" there would be evidence of nothing).
+        var refundAccount = Trimmed(request.RefundAccountNumber);
+        var refundTransaction = Trimmed(request.RefundTransactionId);
+
+        if ((refundAccount is not null || refundTransaction is not null) && refundMethod is null or PaymentMethod.Cash)
+        {
+            throw new BusinessRuleViolationException(
+                "Only a refund sent by transfer carries an account number or transaction ID — cash was handed over at the counter.");
+        }
+
+        // A shop account is where a TRANSFER refund left from. Cash came out of the drawer, and a
+        // return that only reduced what was owed paid nothing back - neither names an account.
+        if (request.RefundShopAccountId is not null && refundMethod is null or PaymentMethod.Cash)
+        {
+            throw new BusinessRuleViolationException(
+                "Only a refund sent by transfer is paid from a shop account — cash came out of the till.");
+        }
+
         var returnNumber = await _returns.NextReturnNumberAsync(uow, "SRT", nowUtc.Year, cancellationToken);
 
         var returnId = await _returns.InsertSaleReturnAsync(
             uow, request.InvoiceId, returnNumber, nowUtc, totalReturned, refundDue, refundMethod,
-            request.Reason, userId, nowUtc, request.InField, cancellationToken);
+            request.Reason, userId, nowUtc, request.InField, cancellationToken, refundAccount, refundTransaction,
+            request.RefundShopAccountId);
 
         await _returns.InsertSaleReturnItemsAsync(uow, returnId, toWrite, cancellationToken);
 
@@ -392,6 +437,9 @@ public sealed class ReturnService : IReturnService
 
     private static decimal Round(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>Blank is "not given", stored as NULL — one value, not two.</summary>
+    private static string? Trimmed(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private Task AuditAsync<T>(
         IUnitOfWork uow, string entityType, long entityId, string field,

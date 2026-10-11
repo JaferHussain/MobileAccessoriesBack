@@ -41,11 +41,14 @@ public static class Commission
     /// for every unit still sold (a returned unit earns nothing).
     /// </summary>
     /// <param name="effectiveUnitPrice">What one unit really fetched — after its line discount and its share of the whole-bill discount.</param>
-    public static decimal ForLine(decimal effectiveUnitPrice, decimal basePrice, int unitsKept, decimal ratePercent)
+    /// <param name="fixedPerUnit">The fixed amount the owner promised on each unit, on top of the rate.</param>
+    public static decimal ForLine(
+        decimal effectiveUnitPrice, decimal basePrice, int unitsKept, decimal ratePercent, decimal fixedPerUnit = 0m)
     {
         var extraPerUnit = Math.Max(0m, effectiveUnitPrice - basePrice);
+        var kept = Math.Max(0, unitsKept);
 
-        return Round(extraPerUnit * unitsKept * ratePercent / 100m);
+        return Round(extraPerUnit * kept * ratePercent / 100m) + Round(Math.Max(0m, fixedPerUnit) * kept);
     }
 
     /// <summary>The part of a commission already earned: its share of the sale that has been paid.</summary>

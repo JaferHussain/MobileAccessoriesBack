@@ -7,7 +7,9 @@ using MoizPos.Domain.Errors;
 namespace MoizPos.Application.Services;
 
 /// <summary>A product and how many of it, as the owner issues or takes back.</summary>
-public sealed record SalesmanStockLine(long ProductId, int Quantity);
+/// <param name="CommissionPerUnit">When issuing: the fixed commission promised on each unit he sells, on
+/// top of the half-above-price rule. Null leaves what was set before; 0 takes it away.</param>
+public sealed record SalesmanStockLine(long ProductId, int Quantity, decimal? CommissionPerUnit = null);
 
 /// <summary>What a salesman carries, and every unit in and out of his bag.</summary>
 public sealed record SalesmanStockStatement(
@@ -108,6 +110,13 @@ public sealed class SalesmanStockService : ISalesmanStockService
             await _salesmanStock.MoveAsync(
                 uow, userId, line.ProductId, line.Quantity, resulting, SalesmanStockReason.Issued,
                 referenceId: null, Trimmed(note), recordedByUserId, nowUtc, cancellationToken);
+
+            // The promise is per product, for all the units he carries: issuing more at a new amount
+            // changes it for the lot. Sales already made keep the amount snapshotted on them.
+            if (line.CommissionPerUnit is { } perUnit)
+            {
+                await _salesmanStock.SetCommissionAsync(uow, userId, line.ProductId, perUnit, cancellationToken);
+            }
         }
 
         await uow.CommitAsync(cancellationToken);
@@ -166,6 +175,11 @@ public sealed class SalesmanStockService : ISalesmanStockService
 
     private static void Validate(IReadOnlyList<SalesmanStockLine> lines)
     {
+        if (lines.Any(line => line.CommissionPerUnit is < 0m))
+        {
+            throw new BusinessRuleViolationException("A commission cannot be negative.");
+        }
+
         if (lines.Count == 0)
         {
             throw new BusinessRuleViolationException("Choose at least one product.");
