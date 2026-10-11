@@ -61,6 +61,13 @@ public record ProductStaffDto
     /// </summary>
     public int? InYourBag { get; init; }
 
+    /// <summary>
+    /// A wholesale quote that fell back to the retail price because the product has no wholesale
+    /// price set. Says THAT it fell back, never what the wholesale price is — so it is safe on the
+    /// Staff shape. False on every retail quote.
+    /// </summary>
+    public bool QuotedAtRetail { get; init; }
+
     public bool IsLowStock { get; init; }
 
     public bool IsActive { get; init; }

@@ -62,6 +62,14 @@ public sealed class RoleEnforcementTests
         "/api/expenses",
         "/api/expense-categories",
         "/api/products/1/stock-movements",
+
+        // What the owner's dashboard is built from: the people, what is worth a look, the drawer
+        // and the transfers still without a screenshot. None of it is for staff.
+        "/api/team",
+        "/api/team/watchlist",
+        "/api/team/1/activity",
+        "/api/day-closings/preview?date=2026-09-01&openingFloat=0",
+        "/api/proofs/missing",
     ];
 
     /// <summary>Routes a salesman legitimately needs to do their job.</summary>

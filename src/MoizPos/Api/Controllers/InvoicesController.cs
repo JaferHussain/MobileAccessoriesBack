@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MoizPos.Application.Abstractions;
+using MoizPos.Application.Calculations;
 using MoizPos.Application.Contracts.Common;
 using MoizPos.Application.Services;
 using MoizPos.Domain.Entities;
@@ -68,7 +69,8 @@ public sealed class CreateInvoiceValidator : AbstractValidator<CreateInvoiceApiR
                 .GreaterThan(0).WithMessage("Quantity must be greater than zero.");
 
             item.RuleFor(i => i.UnitSalePrice)
-                .GreaterThanOrEqualTo(0).WithMessage("Unit price cannot be negative.");
+                .GreaterThanOrEqualTo(0).WithMessage("Unit price cannot be negative.")
+                .Must(WholeRupees.IsWhole).WithMessage(WholeRupees.Message);
 
             item.RuleFor(i => i.LineDiscount)
                 .GreaterThanOrEqualTo(0).WithMessage("Line discount cannot be negative.");

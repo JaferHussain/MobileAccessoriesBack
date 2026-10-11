@@ -101,7 +101,7 @@ public sealed class ProductService : IProductService
 
         var (rows, total) = await _products.SearchAsync(normalized, cancellationToken);
 
-        var items = await ProjectAllAsync(rows, role, fieldSalesmanId, cancellationToken);
+        var items = await ProjectAllAsync(rows, role, fieldSalesmanId, cancellationToken, normalized.SaleType);
 
         return new PagedResult<ProductStaffDto>(items, page, pageSize, total);
     }
@@ -116,7 +116,7 @@ public sealed class ProductService : IProductService
         var row = await _products.FindByIdAsync(id, saleType, cancellationToken)
             ?? throw new NotFoundException("Product", id);
 
-        return (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken))[0];
+        return (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken, saleType))[0];
     }
 
     public async Task<ProductStaffDto?> FindByBarcodeAsync(
@@ -133,7 +133,7 @@ public sealed class ProductService : IProductService
 
         var row = await _products.FindByBarcodeAsync(barcode.Trim(), saleType, cancellationToken);
 
-        return row is null ? null : (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken))[0];
+        return row is null ? null : (await ProjectAllAsync([row], role, fieldSalesmanId, cancellationToken, saleType))[0];
     }
 
     /// <summary>
@@ -141,7 +141,8 @@ public sealed class ProductService : IProductService
     /// salesman one for his own bag. Kept out of the search SQL so search's speed is unchanged.
     /// </summary>
     private async Task<List<ProductStaffDto>> ProjectAllAsync(
-        IReadOnlyList<ProductRow> rows, UserRole role, long? fieldSalesmanId, CancellationToken cancellationToken)
+        IReadOnlyList<ProductRow> rows, UserRole role, long? fieldSalesmanId, CancellationToken cancellationToken,
+        SaleType saleType = SaleType.Retail)
     {
         var ids = rows.Select(row => row.Id).ToList();
         var held = await _salesmanStock.HeldBySalesmenForDisplayAsync(ids, cancellationToken);
@@ -150,7 +151,8 @@ public sealed class ProductService : IProductService
             : null;
 
         return rows.Select(row => Project(
-                row, role, held.GetValueOrDefault(row.Id), bag is null ? null : bag.GetValueOrDefault(row.Id)))
+                row, role, held.GetValueOrDefault(row.Id), bag is null ? null : bag.GetValueOrDefault(row.Id),
+                quotedAtRetail: saleType == SaleType.Wholesale && row.WholesalePrice <= 0m))
             .ToList();
     }
 
@@ -251,7 +253,8 @@ public sealed class ProductService : IProductService
     }
 
     /// <summary>Projects a row to the shape this role is permitted to see.</summary>
-    public static ProductStaffDto Project(ProductRow row, UserRole role, int withSalesmen = 0, int? inYourBag = null)
+    public static ProductStaffDto Project(
+        ProductRow row, UserRole role, int withSalesmen = 0, int? inYourBag = null, bool quotedAtRetail = false)
     {
         // Judged on what the shop OWNS: goods out with a salesman will still be sold.
         var isLowStock = StockRules.IsLowStock(row.QuantityOnHand, row.MinStockThreshold);
@@ -276,6 +279,7 @@ public sealed class ProductService : IProductService
                 AtShop = atShop,
                 WithSalesmen = withSalesmen,
                 InYourBag = inYourBag,
+                QuotedAtRetail = quotedAtRetail,
                 IsLowStock = isLowStock,
                 IsActive = row.IsActive,
             };
@@ -298,6 +302,7 @@ public sealed class ProductService : IProductService
             AtShop = atShop,
             WithSalesmen = withSalesmen,
             InYourBag = inYourBag,
+            QuotedAtRetail = quotedAtRetail,
             IsLowStock = isLowStock,
             IsActive = row.IsActive,
             CostPrice = row.CostPrice,

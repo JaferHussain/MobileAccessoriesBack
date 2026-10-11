@@ -120,6 +120,47 @@ public sealed class CommissionTests
     private static async Task<JsonElement> StatementAsync(HttpClient client, long? userId = null) =>
         await DataAsync(await client.GetAsync(userId is null ? "/api/commissions/me" : $"/api/commissions/{userId}"));
 
+    [Fact]
+    public async Task A_fixed_commission_set_when_issuing_is_earned_on_each_unit_sold_and_shown_to_both()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman) = await StaffAsync(admin, "FieldSales");
+        var productId = await ProductAsync();
+
+        // The owner gives him 5 and promises Rs 50 on each one he sells.
+        (await admin.PostAsJsonAsync($"/api/salesman-stock/{salesmanId}/issue", new
+        {
+            items = new[] { new { productId, quantity = 5, commissionPerUnit = 50m } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // He sees the promise on what he carries.
+        var assigned = (await DataAsync(await salesman.GetAsync("/api/my-products"))).GetProperty("assigned")
+            .EnumerateArray().Single(p => p.GetProperty("productId").GetInt64() == productId);
+        assigned.GetProperty("commissionPerUnit").GetDecimal().Should().Be(50m);
+
+        // He sells 2 at 1,200 (the owner's price is 1,000), cash: 200 above-price half + 2 × 50.
+        (await salesman.PostAsJsonAsync("/api/invoices", new
+        {
+            amountPaid = 2400m,
+            paymentMethod = "Cash",
+            items = new[] { new { productId, quantity = 2, unitSalePrice = 1200m, lineDiscount = 0m } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var mine = await StatementAsync(salesman);
+        mine.GetProperty("earned").GetDecimal().Should().Be(300m);
+        mine.GetProperty("lines").EnumerateArray().Single().GetProperty("fixedPerUnit").GetDecimal().Should().Be(50m);
+
+        // The owner reads the same figure for him.
+        (await StatementAsync(admin, salesmanId)).GetProperty("earned").GetDecimal().Should().Be(300m);
+
+        // Changing the promise later never rewrites what that sale earned.
+        (await admin.PostAsJsonAsync($"/api/salesman-stock/{salesmanId}/issue", new
+        {
+            items = new[] { new { productId, quantity = 1, commissionPerUnit = 80m } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+        (await StatementAsync(salesman)).GetProperty("earned").GetDecimal().Should().Be(300m);
+    }
+
     private static string Today() =>
         DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5)).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 

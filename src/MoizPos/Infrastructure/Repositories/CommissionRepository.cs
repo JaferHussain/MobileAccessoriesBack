@@ -29,6 +29,7 @@ public sealed class CommissionRepository : ICommissionRepository
                    ii.line_total       AS LineTotal,
                    ii.base_unit_price  AS BaseUnitPrice,
                    ii.commission_rate  AS CommissionRate,
+                   COALESCE(ii.fixed_commission_per_unit, 0) AS FixedCommissionPerUnit,
                    i.subtotal          AS InvoiceSubtotal,
                    i.total             AS InvoiceTotal,
                    i.net_amount        AS InvoiceNet,

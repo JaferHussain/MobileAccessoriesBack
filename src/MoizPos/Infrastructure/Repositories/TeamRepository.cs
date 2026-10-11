@@ -6,6 +6,27 @@ namespace MoizPos.Infrastructure.Repositories;
 /// <inheritdoc />
 public sealed class TeamRepository : ITeamRepository
 {
+    public async Task<IReadOnlyList<SalesByMethodRow>> SalesByMethodAsync(
+        long userId, DateTime startUtc, DateTime endUtc, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        // Only money that came in at the sale: full udhaar (Credit, nothing paid) is not a payment.
+        return (await connection.QueryAsync<SalesByMethodRow>(
+            """
+            SELECT CAST(i.payment_method AS CHAR)     AS Method,
+                   COUNT(*)                           AS Bills,
+                   COALESCE(SUM(i.amount_paid), 0)    AS Received
+            FROM invoices i
+            WHERE i.user_id = @userId
+              AND i.invoice_date_utc >= @startUtc
+              AND i.invoice_date_utc <  @endUtc
+              AND i.amount_paid > 0
+            GROUP BY i.payment_method;
+            """,
+            new { userId, startUtc, endUtc })).AsList();
+    }
+
     /// <summary>
     /// The shop's local day for an instant. Asia/Karachi is +05:00 all year (no daylight saving),
     /// so a fixed offset reads the same calendar day PeriodResolver does — and needs no time-zone

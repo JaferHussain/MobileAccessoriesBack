@@ -127,6 +127,36 @@ public sealed class ReportingTests
         }
     }
 
+    [Fact]
+    public async Task The_dashboard_counts_what_is_on_the_shelf_to_sell_and_not_what_the_salesman_carries()
+    {
+        // Owned less what salesmen carry, over priced active products — measured as a change, since
+        // the test database is shared and other products exist.
+        var reports = new ReportRepository(Factory());
+        var before = await reports.ShopStockAsync();
+
+        var productId = await CreateProductAsync(quantity: 10, cost: 300m, salePrice: 500m);
+        var unpriced = await CreateProductAsync(quantity: 7, cost: 0m, salePrice: 0m);
+
+        var (salesmanId, _, _) = await _api.CreateUserAsync(UserRole.Staff);
+        await using (var connection = await _api.OpenDatabaseAsync())
+        {
+            await connection.ExecuteAsync("UPDATE users SET job = 'FieldSales' WHERE id = @salesmanId;", new { salesmanId });
+        }
+
+        await _api.IssueToSalesmanAsync(salesmanId, productId, 4);
+
+        var after = await reports.ShopStockAsync();
+
+        (after.UnitsInShop - before.UnitsInShop).Should().Be(6, "10 owned, 4 out with the salesman; the unpriced 7 cannot be sold");
+        (after.ProductsInStock - before.ProductsInStock).Should().Be(1);
+        (after.UnitsWithSalesmen - before.UnitsWithSalesmen).Should().Be(4);
+        unpriced.Should().BePositive();
+
+        var (reporting, _) = Reporting();
+        (await reporting.DashboardAsync(DashboardPeriod.Today)).ShopStock.UnitsInShop.Should().Be(after.UnitsInShop);
+    }
+
     private async Task<CreateInvoiceResult> SellAsync(
         IClock clock, long productId, int quantity, decimal price, long userId) =>
         await Sales(clock).CreateAsync(

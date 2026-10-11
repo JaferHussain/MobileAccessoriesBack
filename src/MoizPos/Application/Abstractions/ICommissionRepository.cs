@@ -30,6 +30,9 @@ public sealed record CommissionLineRow
 
     public decimal CommissionRate { get; init; }
 
+    /// <summary>The fixed amount per unit promised when the goods were issued. 0 when none.</summary>
+    public decimal FixedCommissionPerUnit { get; init; }
+
     public decimal InvoiceSubtotal { get; init; }
 
     public decimal InvoiceTotal { get; init; }

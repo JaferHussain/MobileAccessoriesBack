@@ -131,4 +131,15 @@ public sealed class CommissionTests
         Commission.Earned(commission: 100m, share: 0.25m).Should().Be(25m);
         Commission.Earned(commission: 100m, share: 1m).Should().Be(100m);
     }
+
+    [Fact]
+    public void A_fixed_amount_per_unit_is_added_on_top_of_half_above_the_price()
+    {
+        // 2 kept at 1,200 against 1,000: 200 from the half-above rule, plus 2 × 50 promised.
+        Commission.ForLine(1200m, 1000m, unitsKept: 2, ratePercent: 50m, fixedPerUnit: 50m).Should().Be(300m);
+        // At the owner's price there is nothing above it — the fixed amount alone.
+        Commission.ForLine(1000m, 1000m, unitsKept: 3, ratePercent: 50m, fixedPerUnit: 50m).Should().Be(150m);
+        // A returned unit earns neither.
+        Commission.ForLine(1200m, 1000m, unitsKept: 0, ratePercent: 50m, fixedPerUnit: 50m).Should().Be(0m);
+    }
 }

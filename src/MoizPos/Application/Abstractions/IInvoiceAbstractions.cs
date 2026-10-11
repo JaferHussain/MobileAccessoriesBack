@@ -26,7 +26,8 @@ public sealed record InvoiceItemToWrite(
     decimal UnitCostPrice,
     decimal LineTotal,
     decimal? BaseUnitPrice = null,
-    decimal? CommissionRate = null);
+    decimal? CommissionRate = null,
+    decimal? FixedCommissionPerUnit = null);
 
 /// <summary>
 /// The write side of selling. Every method takes the caller's transaction so the invoice, the
@@ -42,6 +43,12 @@ public interface IInvoiceWriteRepository
         IUnitOfWork unitOfWork,
         IReadOnlyList<long> productIds,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks a customer Wholesale after a wholesale sale to them. One way: a wholesale party's
+    /// occasional counter purchase never turns them back into a retail customer.
+    /// </summary>
+    Task MarkCustomerWholesaleAsync(IUnitOfWork unitOfWork, long customerId, CancellationToken cancellationToken = default);
 
     Task<CustomerBalanceSnapshot?> LockCustomerAsync(
         IUnitOfWork unitOfWork, long customerId, CancellationToken cancellationToken = default);

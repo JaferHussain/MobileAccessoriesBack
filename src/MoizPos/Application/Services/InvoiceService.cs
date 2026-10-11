@@ -260,6 +260,12 @@ public sealed class InvoiceService : IInvoiceService
         // type, read from the LOCKED row. Before the first write, so a refusal leaves nothing.
         var basePrices = new decimal[request.Items.Count];
 
+        // The fixed commission the owner promised on each product he issued — read under the
+        // product locks already held, and snapshotted on the line like the owner's price.
+        var fixedCommissions = isFieldSale
+            ? await _salesmanStock.CommissionsAsync(uow, userId, request.Items.Select(i => i.ProductId).ToList(), cancellationToken)
+            : new Dictionary<long, decimal>();
+
         for (var index = 0; index < request.Items.Count && isFieldSale; index++)
         {
             var item = request.Items[index];
@@ -382,7 +388,8 @@ public sealed class InvoiceService : IInvoiceService
                 line.LineTotal,
                 // Snapshotted like the cost: tomorrow's price or rate never rewrites what this earned.
                 isFieldSale ? basePrices[index] : null,
-                isFieldSale ? Commission.DefaultRatePercent : null);
+                isFieldSale ? Commission.DefaultRatePercent : null,
+                isFieldSale ? fixedCommissions.GetValueOrDefault(item.ProductId) : null);
         }).ToList();
 
         await _invoices.InsertInvoiceItemsAsync(uow, invoiceId, itemsToWrite, cancellationToken);
@@ -413,6 +420,13 @@ public sealed class InvoiceService : IInvoiceService
                 product.QuantityOnHand.ToString(CultureInfo.InvariantCulture),
                 newQuantity.ToString(CultureInfo.InvariantCulture),
                 "Sale", userId, nowUtc, cancellationToken);
+        }
+
+        // Someone who buys on a wholesale sale is a wholesale customer — the Customers screen's
+        // Wholesale filter reads this. One way only: a later retail purchase never undoes it.
+        if (customerId is { } wholesaleBuyer && request.SaleType == SaleType.Wholesale)
+        {
+            await _invoices.MarkCustomerWholesaleAsync(uow, wholesaleBuyer, cancellationToken);
         }
 
         decimal? customerBalance = null;

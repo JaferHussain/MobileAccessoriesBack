@@ -18,7 +18,8 @@ public sealed class ReturnWriteRepository : IReturnWriteRepository
             SELECT id AS Id, invoice_number AS InvoiceNumber, customer_id AS CustomerId,
                    subtotal AS Subtotal, order_discount AS OrderDiscount,
                    total AS Total, amount_paid AS AmountPaid,
-                   amount_remaining AS AmountRemaining, net_amount AS NetAmount
+                   amount_remaining AS AmountRemaining, net_amount AS NetAmount,
+                   user_id AS SoldByUserId
             FROM invoices
             WHERE id = @invoiceId
             FOR UPDATE;
@@ -79,16 +80,21 @@ public sealed class ReturnWriteRepository : IReturnWriteRepository
         long userId,
         DateTime nowUtc,
         bool inField,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? refundAccountNumber = null,
+        string? refundTransactionId = null,
+        long? refundShopAccountId = null)
     {
         return await unitOfWork.Connection.ExecuteScalarAsync<long>(
             """
             INSERT INTO sale_returns
                 (invoice_id, return_number, return_date_utc, total_amount, refund_due, refund_method,
-                 reason, user_id, created_at_utc, in_field)
+                 refund_shop_account_id, refund_account_number, refund_transaction_id, reason, user_id,
+                 created_at_utc, in_field)
             VALUES
                 (@invoiceId, @returnNumber, @returnDateUtc, @totalAmount, @refundDue, @refundMethod,
-                 @reason, @userId, @nowUtc, @inField);
+                 @refundShopAccountId, @refundAccountNumber, @refundTransactionId, @reason, @userId,
+                 @nowUtc, @inField);
             SELECT LAST_INSERT_ID();
             """,
             new
@@ -96,6 +102,9 @@ public sealed class ReturnWriteRepository : IReturnWriteRepository
                 invoiceId, returnNumber, returnDateUtc, totalAmount, refundDue,
                 // Spelled out as a string: Dapper would otherwise write the enum's int (see Traps).
                 refundMethod = refundMethod?.ToString(),
+                refundShopAccountId,
+                refundAccountNumber,
+                refundTransactionId,
                 reason, userId, nowUtc, inField,
             },
             unitOfWork.Transaction);

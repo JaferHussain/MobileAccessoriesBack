@@ -120,6 +120,26 @@ public sealed class ShopAccountsController : ControllerBase
 /// Checks the account a payment names: it must exist, still be in use, and be able to carry that
 /// method. Shared by expenses and supplier payments so the rule lives in one place.
 /// </summary>
+/// <summary>
+/// The shop's accounts as a payment form offers them — active ones only, read-only. Open to anyone
+/// signed in, because staff take sale returns and pick the account a refund was paid from. Carries
+/// nothing the counter does not already give customers to pay into; adding, editing and hiding
+/// accounts stay the owner's (<see cref="ShopAccountsController"/>).
+/// </summary>
+[ApiController]
+[Route("api/shop-accounts/choices")]
+[Authorize]
+public sealed class ShopAccountChoicesController : ControllerBase
+{
+    private readonly IShopAccountRepository _accounts;
+
+    public ShopAccountChoicesController(IShopAccountRepository accounts) => _accounts = accounts;
+
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken cancellationToken) =>
+        Ok(ApiResponse<IReadOnlyList<ShopAccount>>.Ok(await _accounts.ListAsync(includeInactive: false, cancellationToken)));
+}
+
 public static class ShopAccountCheck
 {
     public static async Task EnsureFitsAsync(

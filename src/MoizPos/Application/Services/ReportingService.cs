@@ -62,6 +62,9 @@ public sealed record DashboardDto
 
     public int ItemsSoldCount { get; init; }
 
+    /// <summary>On the shelf right now, ready to sell — a snapshot, whatever the period.</summary>
+    public ShopStockSummary ShopStock { get; init; } = new();
+
     /// <summary>
     /// The period's takings split into retail and wholesale. Always both rows, zero included,
     /// so a day with no wholesale sales reads as "Wholesale 0" rather than going missing.
@@ -134,6 +137,9 @@ public interface IReportingService
     Task<IReadOnlyList<SaleTypeTotalsRow>> SalesByTypeAsync(
         DateOnly from, DateOnly to, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<SaleTypeReturnsRow>> ReturnsByTypeAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// The individual sales behind a retail or wholesale total — the drill-down. A null
     /// <paramref name="saleType"/> lists both.
@@ -195,6 +201,7 @@ public sealed class ReportingService : IReportingService
         var payables = await _reports.TotalPayablesAsync(cancellationToken);
         var lowStock = await _reports.StockAsync(lowStockOnly: true, cancellationToken);
         var salesByType = await _reports.SalesBySaleTypeAsync(range, cancellationToken);
+        var shopStock = await _reports.ShopStockAsync(cancellationToken);
 
         return new DashboardDto
         {
@@ -217,6 +224,7 @@ public sealed class ReportingService : IReportingService
             TotalReceivables = receivables,
             TotalPayables = payables,
             ItemsSoldCount = itemsSold,
+            ShopStock = shopStock,
             SalesByType = salesByType,
             LowStockProducts = lowStock,
         };
@@ -339,6 +347,12 @@ public sealed class ReportingService : IReportingService
         DateOnly to,
         CancellationToken cancellationToken = default) =>
         _reports.SalesBySaleTypeAsync(Range(from, to), cancellationToken);
+
+    public Task<IReadOnlyList<SaleTypeReturnsRow>> ReturnsByTypeAsync(
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken = default) =>
+        _reports.ReturnsBySaleTypeAsync(Range(from, to), cancellationToken);
 
     public async Task<PagedResult<SaleListRow>> SalesListAsync(
         DateOnly from,

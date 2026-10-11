@@ -143,6 +143,10 @@ total opens the sales behind it — invoice, time, customer, and the salesman wh
   shipped once and `Reading_one_product_honours_the_sale_type` now guards it.
 - Reports: `GET /api/reports/sales-by-type` (both halves, zeroes included) and
   `GET /api/reports/sales-list` (the drill-down; omit `saleType` for the whole day).
+- **A wholesale quote that fell back to retail says so** (`quotedAtRetail` on every product read): a
+  product with no wholesale price is charged retail on a wholesale sale, and without the flag the
+  counter looked like it had ignored the choice. It says THAT it fell back, never the wholesale
+  price — so it is safe on the Staff shape.
 
 ## Product pictures
 
@@ -296,6 +300,11 @@ balances move no money, so they have no payment to prove:
   the same `Storage:PaymentProofRoot` uploads write to). Before `0030` they were not backed up at
   all — a restore would have lost every screenshot.
 - **Deleting an expense deletes its proof file.** A proof whose row is gone is unreachable.
+- **A transfer refund records where it went** (`sale_returns.refund_account_number`,
+  `refund_transaction_id`, migration `0040`) — the customer's account and the transaction, both
+  optional, the same two facts a transfer sale records. **A cash refund is refused both (422)**,
+  before the first write, for the cash sale's reason. Blank is stored as NULL. The return history
+  carries them.
 - **A refund must say how it was paid** (`RecordSaleReturnRequest.RefundMethod`, 422 when money
   goes back without one). Day close subtracts only `refund_method = 'Cash'`; assuming cash showed
   every JazzCash refund as the drawer running **over**. `0030` marked every earlier refund Cash,
@@ -321,14 +330,23 @@ The original sale-proof notes still hold:
 
 ## Customer sale type (retail/wholesale filtering)
 
+> **No longer shown (owner's request).** The Customers screen dropped the type switch, the
+> All/Retail/Wholesale filter and the type label; an udhaar customer is labelled only "Udhaar
+> customer". Retail or wholesale is decided **per sale** at the counter, for any customer — nothing
+> ties a customer's price to their type. The column, the `saleType` filter on `GET /api/customers`
+> and the mark-on-wholesale-sale below are left in place (no migration), unread by any screen.
+
 Every customer carries a `sale_type` of `Retail` or `Wholesale` (migration `0019`, feature 004),
 defaulting to Retail. The Customers screen offers All/Retail/Wholesale beside search, as
 alternatives — never combined with each other, but combined with search and "owes money".
 
-- **It is a standing label, never derived from invoices.** A wholesale party's occasional
-  counter purchase must not reclassify them, and a customer with no sales yet must not have a
-  type invented. This is the opposite of how `sale_type` works on `invoices` — that one is
-  recorded per sale; this one is set once, by the owner, on the customer.
+- **A wholesale sale marks its customer Wholesale — one way only** (`InvoiceService`,
+  `MarkCustomerWholesaleAsync`, inside the sale's transaction). Before this nothing on any screen
+  ever set the type, so every customer stayed Retail and the Wholesale filter was always empty
+  (the owner's report: Ikram bought wholesale and was not listed). A later RETAIL purchase never
+  turns a wholesale party back: their occasional counter purchase must not reclassify them.
+  Migration `0040` brought everyone who had already bought wholesale up to date. The owner can
+  also set or correct it by hand (the customer page's Retail / Wholesale switch).
 - **Admin-only to set** (FR-105), same pattern as opening balances: the request DTO carries a
   nullable `SaleType?`, and the controller applies it only when `CurrentUser.Role(User) ==
   Admin`, silently ignoring it otherwise. This keeps Staff's quick-create-during-a-sale
@@ -359,6 +377,28 @@ to see what had been returned. Two GET endpoints and two Dashboard fields close 
   already subtract returns, per the existing `TotalPurchasesAsync` query. The new fields do not
   change any total; they just show the owner the return figure that was already folded in,
   instead of leaving it invisible inside a smaller number.
+
+## Who returned it — customer and sale type on every return
+
+A return stores only `invoice_id`; **the customer and Retail/Wholesale are read from that invoice**,
+never stored twice. A walk-in sale has no customer, so `customerName` is **null** (the screens say
+"Walk-in"). `GET /api/sale-returns` takes `saleType`, `search` (customer name/mobile, invoice,
+product) and `customerId`; `GET /api/reports/returns-by-type` splits the period's returns by the
+invoice's sale type (dated by the return, both rows always present).
+
+- **Cash refunds get no ledger line, on purpose.** The ledger replays `bill − paid` into the
+  balance, and Recovery/commission read it; a zero-effect row would be one more thing they must
+  ignore. The customer page lists returns from the returns themselves (`CustomerReturnsPanel`).
+- The reason is a standard pick (Faulty / Wrong item / Changed mind / Other) plus an optional note,
+  stored together as one string — "Faulty / not working — cracked at the connector".
+
+## Staff take back only their own sales
+
+For any **Staff** caller (counter shopkeeper and field salesman), `GET /api/sale-returns/find` and
+`GET /api/sale-returns` are narrowed to invoices they sold (`invoices.user_id`), and `ReturnService`
+refuses (422, before the first write) a return on an invoice someone else sold
+(`RecordSaleReturnRequest.OwnSalesOnly` + `InvoiceSnapshot.SoldByUserId`). **Only the owner** takes
+back anyone's sale and sees every return. `FieldSalesTests` covers both jobs.
 
 ## Return item — find a return by product name
 
@@ -498,6 +538,19 @@ sellable.** Add product → record a purchase → sell.
   would otherwise happily sell an unpriced product at whatever it claimed.
 - Tests that need something sellable but are not about stocking use
   `ApiFactory.StockProductAsync(...)`. The real rule lives in `Products/StockingFlowTests`.
+
+## Prices are whole rupees
+
+The owner's rule: **cost, retail and wholesale prices, and the price a sale charges, are whole
+rupees — no paisa.** `WholeRupees` (Application, pure) is the one test. It is checked where a price
+is ENTERED: `CreatePurchaseValidator` (cost and both selling prices), `PurchaseBillService.ValidateLines`
+(before the first write, so one line with paisa saves nothing) and `CreateInvoiceValidator`
+(`UnitSalePrice`). The screens mirror it (`BillLineForm`, the cart's `calculateCart`).
+
+- **Only prices.** Totals, discounts, payments and a refund after a spread discount are worked out
+  or typed as money, not prices, and may still carry paisa. Columns stay `DECIMAL`.
+- **A product already stored with paisa** cannot be sold at that price until a purchase re-prices
+  it in whole rupees — the counter's cart says so before the server would refuse it.
 
 ## Purchase bills — a supplier's bill, and the payment made with it
 
@@ -750,6 +803,10 @@ expense or supplier payment names the account it left (`shop_account_id`, option
   and Raast; JazzCash ← JazzCash; EasyPaisa ← EasyPaisa. Cash, Credit and Partial go through no
   account. `ShopAccountCheck` (Api) refuses a mismatched or retired account with 422, and is the one
   place expenses and supplier payments check it.
+- **A sale-return refund names the account it was paid from** (`sale_returns.refund_shop_account_id`,
+  migration `0041`), checked by the same `ShopAccountCheck`. Refused for cash and when nothing went
+  back. Staff take returns, so **`GET /api/shop-accounts/choices`** (any signed-in user, active
+  accounts only, read-only) feeds "Refunded by"; managing accounts stays Admin-only.
 - **Nothing is hard-deleted** — neither accounts nor expense categories. Hiding sets
   `is_active = FALSE`: no longer offered, still named on every past record. Names are unique;
   a duplicate is a 422 in words, not a database error.
@@ -811,6 +868,13 @@ earned once the customer has paid for it — and he may never sell below that pr
   is owed is a 422 — commission on unrecovered udhaar is not his yet. A **cash** payout joins
   `CashPaidOut` at day close; every payout counts in `ExpenseRepository.SumForPeriodAsync` (net
   profit) and appears as "Salesman commission" in the expense breakdown, so the two agree.
+- **A fixed commission per product, set when issuing** (migration `0042`): each issue line may carry
+  `commissionPerUnit` → `salesman_stock.commission_per_unit` (per product, for all he carries; omitted
+  keeps it, 0 removes it). A field sale snapshots it on the line (`invoice_items.fixed_commission_per_unit`,
+  like `base_unit_price`), so changing it later never rewrites what was earned. **Added on top of the
+  half-above rule, which is unchanged** (`Commission.ForLine(..., fixedPerUnit)`), earned the same way —
+  once the customer has paid; a returned unit earns neither. Shown on My day ("My commission / unit")
+  and beside his cash on the owner's Salesman cash page.
 - `/api/commissions/{userId}` and payouts are Admin only; `/api/commissions/me` gives a salesman
   his own — sale prices and the owner's price, never cost.
 - A salesman may now sell on udhaar to the owner's udhaar customers (below); the commission
@@ -835,7 +899,9 @@ by the owner with name, phone and **both sides of their ID card** (migration `00
 `customers.id_card_front_path`, `id_card_back_path`). `/api/udhaar-customers` — **owner only, every
 route**: list, a customer's standing, register new (multipart: `name`, `mobileNumber`, `idCardFront`,
 `idCardBack`), `{id}/register` (make an existing customer one, or complete a missing card — a side
-already on file need not be sent again), `DELETE` (take the mark away; what they owe and the photos
+already on file need not be sent again), `PUT {id}` (edit a registered one: name and phone required, a photo sent
+replaces only that side — never touches the mark or what they owe; 422 for anyone not registered),
+`DELETE` (take the mark away; what they owe and the photos
 are kept), `{id}/id-card/{front|back}` (stream one side).
 
 - **The mark is granted only here.** `POST`/`PUT /api/customers` refuse `creditAllowed: true` (422)
@@ -879,6 +945,15 @@ same card the owner sees on Team, plus his sales, returns and recoveries (`TeamS
 purchases, supplier payments and expenses are filtered out: they are the owner's business, and a
 purchase line's amount is cost. With `/api/commissions/me` and `/api/salesman-cash/me` it is
 everything the phone's **My day** screen shows.
+
+## The salesman's own products
+
+`GET /api/my-products?from=&to=` (any signed-in user, always the caller's own — no user id):
+**assigned** (his `salesman_stock`, with `products.retail_price` as `price` and quantity × price as
+`value`) and **sold** (his invoice lines in the period, `quantity − returned_qty`, each line's
+`line_total × total/subtotal` so the bill discount is spread, grouped by product). **Retail price
+only** — wholesale and cost are on the Staff-forbidden list (FR-040), and the response is named so
+`StaffDtoExposureTests` stays green.
 
 ## Stock the salesman carries
 

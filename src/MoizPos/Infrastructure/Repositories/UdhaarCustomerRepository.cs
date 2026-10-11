@@ -102,6 +102,25 @@ public sealed class UdhaarCustomerRepository : IUdhaarCustomerRepository
             new { customerId, mobileNumber, frontPath, backPath });
     }
 
+    public async Task UpdateAsync(
+        long customerId, string name, string mobileNumber, string? frontPath, string? backPath,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+
+        await connection.ExecuteAsync(
+            """
+            UPDATE customers
+            SET name               = @name,
+                mobile_number      = @mobileNumber,
+                id_card_front_path = COALESCE(@frontPath, id_card_front_path),
+                id_card_back_path  = COALESCE(@backPath, id_card_back_path),
+                updated_at_utc     = UTC_TIMESTAMP(6)
+            WHERE id = @customerId;
+            """,
+            new { customerId, name, mobileNumber, frontPath, backPath });
+    }
+
     public async Task RemoveAsync(long customerId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);

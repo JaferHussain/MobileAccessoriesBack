@@ -25,7 +25,9 @@ public sealed record CommissionLine(
     /// <summary>Earned, Pending, or PartEarned (udhaar partly recovered).</summary>
     string Status,
     /// <summary>The day the sale was paid for in full — when its commission was earned.</summary>
-    DateOnly? EarnedOn);
+    DateOnly? EarnedOn,
+    /// <summary>The fixed amount promised per unit when the goods were issued. 0 when none.</summary>
+    decimal FixedPerUnit = 0m);
 
 public sealed record CommissionPayout(
     long Id, decimal Amount, string PaymentMethod, string? Note, DateTime PaidAtUtc, string RecordedBy, bool HasProof = false);
@@ -89,7 +91,8 @@ public sealed class CommissionService : ICommissionService
         var lines = rows.Select(row =>
         {
             var soldAt = ReturnPricing.EffectiveUnitPrice(row.LineTotal, row.Quantity, row.InvoiceSubtotal, row.InvoiceTotal);
-            var commission = Commission.ForLine(soldAt, row.BaseUnitPrice, row.Quantity - row.ReturnedQty, row.CommissionRate);
+            var commission = Commission.ForLine(
+                soldAt, row.BaseUnitPrice, row.Quantity - row.ReturnedQty, row.CommissionRate, row.FixedCommissionPerUnit);
             var settlement = settlements.GetValueOrDefault(row.InvoiceId, new DebtSettlement(1m, ShopDate(row.InvoiceDateUtc)));
             var earned = Commission.Earned(commission, settlement.Share);
 
@@ -109,7 +112,8 @@ public sealed class CommissionService : ICommissionService
                 earned,
                 commission - earned,
                 earned == commission ? "Earned" : earned == 0m ? "Pending" : "PartEarned",
-                earned == commission && commission > 0m ? settlement.SettledOn : null);
+                earned == commission && commission > 0m ? settlement.SettledOn : null,
+                row.FixedCommissionPerUnit);
         }).ToList();
 
         var payouts = (await _commission.PayoutsAsync(userId, cancellationToken))

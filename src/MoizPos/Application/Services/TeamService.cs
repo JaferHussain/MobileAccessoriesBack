@@ -7,7 +7,22 @@ using MoizPos.Domain.Errors;
 namespace MoizPos.Application.Services;
 
 /// <summary>A person's own day: their card and what they sold, returned and recovered.</summary>
-public sealed record MyDay(TeamMemberRow Card, IReadOnlyList<TeamActivityRow> Activity);
+/// <summary>How the person's sales were paid: cash, and each online method — what came in at the sale.</summary>
+public sealed record MyPayments
+{
+    public int CashBills { get; init; }
+
+    public decimal CashReceived { get; init; }
+
+    public int OnlineBills { get; init; }
+
+    public decimal OnlineReceived { get; init; }
+
+    /// <summary>Each online method on its own — BankTransfer, JazzCash, EasyPaisa, Raast — largest first.</summary>
+    public IReadOnlyList<SalesByMethodRow> Online { get; init; } = [];
+}
+
+public sealed record MyDay(TeamMemberRow Card, IReadOnlyList<TeamActivityRow> Activity, MyPayments Payments);
 
 public interface ITeamService
 {
@@ -61,7 +76,20 @@ public sealed class TeamService : ITeamService
             .Where(entry => OwnSelling.Contains(entry.Kind))
             .ToList();
 
-        return new MyDay(card, activity);
+        var byMethod = await _team.SalesByMethodAsync(userId, range.StartUtc, range.EndUtc, cancellationToken);
+
+        // Cash and a part paid in cash are both notes; everything else is an online transfer.
+        var cash = byMethod.Where(row => row.Method is "Cash" or "Partial").ToList();
+        var online = byMethod.Where(row => row.Method is not ("Cash" or "Partial")).OrderByDescending(row => row.Received).ToList();
+
+        return new MyDay(card, activity, new MyPayments
+        {
+            CashBills = cash.Sum(row => row.Bills),
+            CashReceived = cash.Sum(row => row.Received),
+            OnlineBills = online.Sum(row => row.Bills),
+            OnlineReceived = online.Sum(row => row.Received),
+            Online = online,
+        });
     }
 
     public Task<IReadOnlyList<TeamMemberRow>> MembersAsync(DateOnly? from, DateOnly? to, CancellationToken cancellationToken = default)

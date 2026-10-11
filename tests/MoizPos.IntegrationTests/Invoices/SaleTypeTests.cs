@@ -238,6 +238,92 @@ public sealed class SaleTypeTests
     }
 
     [Fact]
+    public async Task A_wholesale_quote_says_when_it_fell_back_to_the_retail_price()
+    {
+        // "Wholesale selected, but the counter shows the retail price" — the product simply has
+        // no wholesale price. The quote now says so, rather than looking like a broken screen.
+        var staff = await ClientAsync(UserRole.Staff);
+        var unpriced = await CreateProductAsync(salePrice: 1100m, wholesalePrice: 0m);
+        var priced = await CreateProductAsync(salePrice: 1100m, wholesalePrice: 950m);
+
+        async Task<JsonElement> ReadAsync(long id, string saleType) =>
+            (await staff.GetFromJsonAsync<Envelope<JsonElement>>($"/api/products/{id}?saleType={saleType}", Json))!.Data!;
+
+        (await ReadAsync(unpriced, "Wholesale")).GetProperty("quotedAtRetail").GetBoolean().Should().BeTrue();
+        (await ReadAsync(priced, "Wholesale")).GetProperty("quotedAtRetail").GetBoolean().Should().BeFalse();
+        (await ReadAsync(priced, "Wholesale")).GetProperty("salePrice").GetDecimal().Should().Be(950m);
+        (await ReadAsync(unpriced, "Retail")).GetProperty("quotedAtRetail").GetBoolean().Should().BeFalse("a retail sale is meant to be retail");
+    }
+
+    // ---------------------------------------------------------------- the customer's type
+
+    private async Task<long> UdhaarCustomerAsync(string name)
+    {
+        await using var connection = await _api.OpenDatabaseAsync();
+
+        return await connection.ExecuteScalarAsync<long>(
+            """
+            INSERT INTO customers (name, mobile_number, credit_allowed, outstanding_balance, is_active, created_at_utc)
+            VALUES (@name, '03001234567', TRUE, 0, TRUE, UTC_TIMESTAMP(6));
+            SELECT LAST_INSERT_ID();
+            """,
+            new { name });
+    }
+
+    private static object CustomerSale(long customerId, long productId, string saleType, decimal unitPrice) =>
+        new
+        {
+            customerId,
+            saleType,
+            amountPaid = unitPrice,
+            paymentMethod = "Cash",
+            items = new[] { new { productId, quantity = 1, unitSalePrice = unitPrice, lineDiscount = 0m } },
+        };
+
+    [Fact]
+    public async Task Buying_on_a_wholesale_sale_makes_the_customer_a_wholesale_customer_and_a_retail_sale_never_undoes_it()
+    {
+        // Ikram bought on a wholesale sale, and the Customers screen's Wholesale filter was empty:
+        // nothing ever set a customer's type. A wholesale sale now does — one way only.
+        var admin = await ClientAsync(UserRole.Admin);
+        var name = $"Ikram {Guid.NewGuid():N}"[..18];
+        var customerId = await UdhaarCustomerAsync(name);
+        var productId = await CreateProductAsync();
+
+        (await admin.PostAsJsonAsync("/api/invoices", CustomerSale(customerId, productId, "Wholesale", 950m)))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        async Task<string?> TypeAsync() =>
+            (await admin.GetFromJsonAsync<Envelope<JsonElement>>($"/api/customers/{customerId}", Json))!.Data!
+                .GetProperty("saleType").GetString();
+
+        (await TypeAsync()).Should().Be("Wholesale");
+
+        var wholesaleList = (await admin.GetFromJsonAsync<Envelope<JsonElement>>(
+            $"/api/customers?saleType=Wholesale&search={Uri.EscapeDataString(name)}", Json))!.Data!.GetProperty("items");
+        wholesaleList.EnumerateArray().Select(c => c.GetProperty("id").GetInt64()).Should().Contain(customerId);
+
+        // An occasional counter purchase does not reclassify a wholesale party.
+        (await admin.PostAsJsonAsync("/api/invoices", CustomerSale(customerId, productId, "Retail", 1100m)))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+        (await TypeAsync()).Should().Be("Wholesale");
+    }
+
+    [Fact]
+    public async Task The_owner_can_set_a_customers_type_by_hand()
+    {
+        var admin = await ClientAsync(UserRole.Admin);
+        var name = $"Hand {Guid.NewGuid():N}"[..18];
+        var customerId = await UdhaarCustomerAsync(name);
+
+        (await admin.PutAsJsonAsync($"/api/customers/{customerId}", new { name, mobileNumber = "03001234567", saleType = "Wholesale" }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await admin.GetFromJsonAsync<Envelope<JsonElement>>($"/api/customers/{customerId}", Json))!.Data!
+            .GetProperty("saleType").GetString().Should().Be("Wholesale");
+    }
+
+    [Fact]
     public async Task The_wholesale_price_never_reaches_staff_as_its_own_field()
     {
         var staff = await ClientAsync(UserRole.Staff);

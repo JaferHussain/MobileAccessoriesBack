@@ -116,6 +116,158 @@ public sealed class FieldSalesTests
         });
     }
 
+    [Fact]
+    public async Task The_salesman_sees_what_he_carries_at_its_price_and_what_he_sold_and_nothing_of_cost()
+    {
+        var admin = await AdminAsync();
+        var (salesmanId, salesman, _) = await StaffAsync(admin, "FieldSales");
+
+        var carried = await ProductAsync();
+        await _api.IssueToSalesmanAsync(salesmanId, carried, 5);
+
+        // Two sold at 1,100 each on one bill with a 200 discount: worth 2,000 (never below the shop's price).
+        (await salesman.PostAsJsonAsync("/api/invoices", new
+        {
+            amountPaid = 2000m,
+            paymentMethod = "Cash",
+            orderDiscount = 200m,
+            items = new[] { new { productId = carried, quantity = 2, unitSalePrice = 1100m, lineDiscount = 0m } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var response = await salesman.GetAsync("/api/my-products");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        var data = await DataAsync(response);
+
+        var assigned = data.GetProperty("assigned").EnumerateArray().Single(p => p.GetProperty("productId").GetInt64() == carried);
+        assigned.GetProperty("quantity").GetInt32().Should().Be(3, "5 issued, 2 sold out of his bag");
+        assigned.GetProperty("price").GetDecimal().Should().Be(1000m);
+        assigned.GetProperty("value").GetDecimal().Should().Be(3000m);
+
+        var sold = data.GetProperty("sold").EnumerateArray().Single(p => p.GetProperty("productId").GetInt64() == carried);
+        sold.GetProperty("quantitySold").GetInt32().Should().Be(2);
+        sold.GetProperty("amount").GetDecimal().Should().Be(2000m, "the bill discount comes off what he sold");
+        data.GetProperty("soldAmount").GetDecimal().Should().Be(2000m);
+
+        body.Should().NotContainAny("cost", "wholesale", "profit");
+    }
+
+    [Fact]
+    public async Task A_salesman_finds_and_takes_back_only_what_he_sold_himself()
+    {
+        var admin = await AdminAsync();
+        var (_, ali, _) = await StaffAsync(admin, "FieldSales");
+        var (_, bilal, _) = await StaffAsync(admin, "FieldSales");
+
+        async Task<(long InvoiceId, string Number, long ItemId)> SaleOfAsync(HttpClient seller)
+        {
+            var sale = await DataAsync(await SellAsync(seller, 1000m));
+            var invoiceId = sale.GetProperty("invoiceId").GetInt64();
+            var items = (await DataAsync(await admin.GetAsync($"/api/invoices/{invoiceId}"))).GetProperty("items");
+            return (invoiceId, sale.GetProperty("invoiceNumber").GetString()!, items[0].GetProperty("id").GetInt64());
+        }
+
+        var own = await SaleOfAsync(ali);
+        var others = await SaleOfAsync(bilal);
+
+        // His search finds his own sale, never Bilal's — even searched by Bilal's invoice number.
+        var found = (await DataAsync(await ali.GetAsync($"/api/sale-returns/find?search={own.Number}"))).EnumerateArray().ToList();
+        found.Should().Contain(r => r.GetProperty("invoiceId").GetInt64() == own.InvoiceId);
+        (await DataAsync(await ali.GetAsync($"/api/sale-returns/find?search={others.Number}"))).EnumerateArray()
+            .Should().BeEmpty();
+
+        // Taking back Bilal's sale is refused, and nothing is saved.
+        (await ali.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId = others.InvoiceId,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = others.ItemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        // His own goes through.
+        (await ali.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId = own.InvoiceId,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = own.ItemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Bilal returns his own; Ali's history lists only Ali's.
+        (await bilal.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId = others.InvoiceId,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = others.ItemId, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var history = (await DataAsync(await ali.GetAsync("/api/sale-returns?pageSize=200"))).GetProperty("items").EnumerateArray().ToList();
+        history.Should().Contain(r => r.GetProperty("invoiceId").GetInt64() == own.InvoiceId);
+        history.Should().NotContain(r => r.GetProperty("invoiceId").GetInt64() == others.InvoiceId);
+
+        // The owner still sees both.
+        var all = (await DataAsync(await admin.GetAsync("/api/sale-returns?pageSize=200"))).GetProperty("items").EnumerateArray().ToList();
+        all.Should().Contain(r => r.GetProperty("invoiceId").GetInt64() == others.InvoiceId);
+    }
+
+    [Fact]
+    public async Task The_counter_shopkeeper_too_takes_back_only_his_own_sales_and_the_owner_any()
+    {
+        var admin = await AdminAsync();
+        var (_, counter, _) = await StaffAsync(admin, "Counter");
+
+        var ownerSale = await DataAsync(await SellAsync(admin, 1000m));
+        var ownerInvoice = ownerSale.GetProperty("invoiceId").GetInt64();
+        var ownerItem = (await DataAsync(await admin.GetAsync($"/api/invoices/{ownerInvoice}"))).GetProperty("items")[0].GetProperty("id").GetInt64();
+
+        (await DataAsync(await counter.GetAsync($"/api/sale-returns/find?search={ownerSale.GetProperty("invoiceNumber").GetString()}")))
+            .EnumerateArray().Should().BeEmpty("the owner's sale is not his");
+
+        (await counter.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId = ownerInvoice,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = ownerItem, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var counterSale = await DataAsync(await SellAsync(counter, 1000m));
+        var counterInvoice = counterSale.GetProperty("invoiceId").GetInt64();
+        var counterItem = (await DataAsync(await admin.GetAsync($"/api/invoices/{counterInvoice}"))).GetProperty("items")[0].GetProperty("id").GetInt64();
+
+        // The owner may take back anyone's — here, the shopkeeper's.
+        (await admin.PostAsJsonAsync("/api/sale-returns", new
+        {
+            invoiceId = counterInvoice,
+            refundMethod = "Cash",
+            items = new[] { new { invoiceItemId = counterItem, quantity = 1 } },
+        })).StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task My_day_shows_online_sales_apart_from_cash_method_by_method()
+    {
+        var admin = await AdminAsync();
+        var (_, ali, _) = await StaffAsync(admin, "FieldSales");
+        var udhaar = await CustomerAsync(admin, creditAllowed: true);
+
+        (await SellAsync(ali, 1000m, "Cash")).StatusCode.Should().Be(HttpStatusCode.Created);
+        (await SellAsync(ali, 1000m, "JazzCash")).StatusCode.Should().Be(HttpStatusCode.Created);
+        // A part paid by bank transfer: only the 400 that came in counts as received online.
+        (await SellAsync(ali, 400m, "BankTransfer", udhaar)).StatusCode.Should().Be(HttpStatusCode.Created);
+        // Full udhaar: nothing came in, so it is no payment at all.
+        (await SellAsync(ali, 0m, "Credit", udhaar)).StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var payments = (await DataAsync(await ali.GetAsync("/api/my-day"))).GetProperty("payments");
+
+        payments.GetProperty("cashBills").GetInt32().Should().Be(1);
+        payments.GetProperty("cashReceived").GetDecimal().Should().Be(1000m);
+        payments.GetProperty("onlineBills").GetInt32().Should().Be(2);
+        payments.GetProperty("onlineReceived").GetDecimal().Should().Be(1400m);
+
+        var online = payments.GetProperty("online").EnumerateArray()
+            .ToDictionary(row => row.GetProperty("method").GetString()!, row => row.GetProperty("received").GetDecimal());
+        online.Should().BeEquivalentTo(new Dictionary<string, decimal> { ["JazzCash"] = 1000m, ["BankTransfer"] = 400m });
+    }
+
     /// <summary>An udhaar customer is registered with the ID card; anyone else is an ordinary contact.</summary>
     private static async Task<long> CustomerAsync(HttpClient admin, bool creditAllowed)
     {
